@@ -9,6 +9,7 @@
 import { loadTank } from "./tank.js";
 import { computeLayout, zoomedLayout } from "./layout.js";
 import {
+  easeDrawn,
   interpolateCreatures,
   departedCreatures,
   type Departed,
@@ -53,18 +54,28 @@ const DEFAULT_SEED = 7;
 // world and not to the 60 FPS render loop, which stays separate on purpose
 // (see `loop.ts`) and is what `interpolate.ts` smooths the gap with.
 //
-// It was six, and six was too quick to watch: the first person to open the
-// deployed page said so, and the honest fix is to move the base rate rather
-// than to ship with the `0.5x` button pre-pressed. A default that reads as
-// "slowed down" is a default apologising for itself, and it leaves nowhere to
-// go for somebody who wants it slower still.
-const TICK_MS = 1000 / 3;
+// It was six, then three, and now one and a half. Both cuts came from watching
+// it rather than from an argument, and both moved the base rate rather than
+// shipping with a slower button pre-pressed: a default that reads as "slowed
+// down" is a default apologising for itself. `2x` and `4x` are still there for
+// anybody who wants the old pace.
+//
+// A slow world is not automatically a smooth one -- see `easeDrawn` in
+// `interpolate.ts`, which is what actually removes the flick at each tick
+// boundary. Slowing the tick alone just gives the same corner longer to be
+// looked at.
+const TICK_MS = 1000 / 1.5;
 
 // How following eases: the real milliseconds in which half the remaining
 // distance to the followed creature closes. Not tied to `TICK_MS` or
 // `speed` — a visitor watching one animal live should see the camera settle
 // at the same real-world pace whether the tank is paused, at 1x, or at 4x.
-const CAMERA_HALF_LIFE_MS = 200;
+const CAMERA_HALF_LIFE_MS = 420;
+
+/** How long the drawn position takes to cover half the distance to where the
+ * tick interpolation puts it. Long enough to round off every tick boundary,
+ * short enough that a creature never visibly lags behind its own trail. */
+const DRAWN_HALF_LIFE_MS = 130;
 const FOLLOW_ZOOM = 2;
 
 // How often a trail point is sampled, in real milliseconds. Every render
@@ -161,6 +172,7 @@ async function main(): Promise<void> {
   const microsAvg = new RollingAverage();
   const decisionRate = new DecisionRate();
   let lastTickAt = performance.now();
+  const held = new Map<number, DrawnCreature>();
 
   // --- The inspector's own state. `selectedId` survives ticks and worlds by
   // id, not by array position — the same reason `interpolate.ts` matches
@@ -677,7 +689,14 @@ async function main(): Promise<void> {
     if (currSnapshot) {
       const alpha = paused ? 1 : alphaOf(carry, TICK_MS);
       const base = computeLayout(cssWidth, cssHeight, WIDTH, HEIGHT, 16);
-      const drawn = interpolateCreatures(prevSnapshot, currSnapshot, alpha);
+      // Where the tick says they are, then eased towards it so the turn at
+      // each tick boundary is a curve rather than a corner.
+      const drawn = easeDrawn(
+        held,
+        interpolateCreatures(prevSnapshot, currSnapshot, alpha),
+        dt,
+        DRAWN_HALF_LIFE_MS,
+      );
 
       // The camera eases in real time (`dt`, never `dt * speed`) towards
       // whichever creature Follow is watching, or back to the reef's own

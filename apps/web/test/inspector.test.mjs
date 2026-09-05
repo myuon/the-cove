@@ -633,3 +633,76 @@ test("clampCamera centres a reef smaller than the view", async () => {
     zoom: 1,
   });
 });
+
+// Interpolating between two snapshots is smooth inside a tick and corners at
+// every tick boundary, which the eye reads as a flick. `easeDrawn` is the
+// low-pass that rounds it off. Without these, the half-life could quietly
+// become frame-rate dependent — the commonest way an easing like this goes
+// wrong, and one that only shows on a machine that is not the one it was
+// written on.
+test("easeDrawn covers half the distance in one half-life", async () => {
+  const { easeDrawn } = await import("../dist/interpolate.js");
+  const at = (x) => ({
+    id: 1, species: 0, x, y: 0, facingX: 1, facingY: 0,
+    speed: 0, energy: 10, age: 1, hidden: false,
+    intent: "", reason: "", result: "",
+  });
+  const held = new Map();
+  easeDrawn(held, [at(0)], 16, 100);
+  const [after] = easeDrawn(held, [at(10)], 100, 100);
+  assert.ok(Math.abs(after.x - 5) < 1e-9, `moved to ${after.x}`);
+});
+
+test("easeDrawn eases at the same rate whatever the frame rate", async () => {
+  const { easeDrawn } = await import("../dist/interpolate.js");
+  const at = (x) => ({
+    id: 1, species: 0, x, y: 0, facingX: 1, facingY: 0,
+    speed: 0, energy: 10, age: 1, hidden: false,
+    intent: "", reason: "", result: "",
+  });
+  const slow = new Map();
+  easeDrawn(slow, [at(0)], 16, 200);
+  const [slowAfter] = easeDrawn(slow, [at(100)], 200, 200);
+
+  const fast = new Map();
+  easeDrawn(fast, [at(0)], 16, 200);
+  let fastAfter;
+  for (let i = 0; i < 10; i += 1) {
+    [fastAfter] = easeDrawn(fast, [at(100)], 20, 200);
+  }
+  assert.ok(
+    Math.abs(slowAfter.x - fastAfter.x) < 0.5,
+    `one 200ms step reached ${slowAfter.x}, ten 20ms steps reached ${fastAfter.x}`,
+  );
+});
+
+// A creature that has just spawned has nowhere to ease from. Easing it in from
+// wherever the map last had that id would drag a ghost across the reef every
+// time a slot refilled.
+test("easeDrawn puts a new creature where it actually is", async () => {
+  const { easeDrawn } = await import("../dist/interpolate.js");
+  const fresh = {
+    id: 7, species: 0, x: 40, y: 30, facingX: 0, facingY: 1,
+    speed: 1, energy: 10, age: 0, hidden: false,
+    intent: "", reason: "", result: "",
+  };
+  const [placed] = easeDrawn(new Map(), [fresh], 16, 130);
+  assert.equal(placed.x, 40);
+  assert.equal(placed.y, 30);
+});
+
+// And a creature that has died stops being held, or the map grows for the
+// lifetime of the page.
+test("easeDrawn forgets creatures that are gone", async () => {
+  const { easeDrawn } = await import("../dist/interpolate.js");
+  const one = {
+    id: 3, species: 0, x: 1, y: 1, facingX: 1, facingY: 0,
+    speed: 0, energy: 5, age: 1, hidden: false,
+    intent: "", reason: "", result: "",
+  };
+  const held = new Map();
+  easeDrawn(held, [one], 16, 130);
+  assert.equal(held.size, 1);
+  easeDrawn(held, [], 16, 130);
+  assert.equal(held.size, 0);
+});

@@ -118,3 +118,61 @@ export function departedCreatures(
     .filter((c) => !still.has(c.id))
     .map((c) => ({ id: c.id, species: c.species, x: c.x, y: c.y }));
 }
+
+/**
+ * The same creatures, eased towards where the tick interpolation put them.
+ *
+ * Interpolating between two snapshots is smooth *within* a tick and has a
+ * corner *at* every tick boundary: the drawn velocity changes instantly when a
+ * new snapshot arrives, and the eye reads that as a flick. Slowing the world
+ * down does not fix it — it gives the same corner longer to be looked at.
+ *
+ * So the drawn position, facing and speed are low-passed: each frame they move
+ * a fixed fraction of the way to where interpolation says they should be, with
+ * the fraction set by a half-life rather than by the frame rate, so a slow
+ * machine and a fast one ease at the same speed in real time.
+ *
+ * It costs a little lag, and lag is free here. Nobody is steering anything;
+ * this is a thing to watch.
+ */
+export function easeDrawn(
+  held: Map<number, DrawnCreature>,
+  target: readonly DrawnCreature[],
+  dtMs: number,
+  halfLifeMs: number,
+): DrawnCreature[] {
+  const k = halfLifeMs <= 0 ? 1 : 1 - Math.pow(0.5, dtMs / halfLifeMs);
+  const out: DrawnCreature[] = [];
+  const seen = new Set<number>();
+  for (const want of target) {
+    seen.add(want.id);
+    const was = held.get(want.id);
+    if (!was) {
+      // A creature nobody has drawn yet has nowhere to ease from: it arrives
+      // where it is. Easing it in from the last one's position would drag a
+      // ghost across the reef every time a slot refilled.
+      held.set(want.id, want);
+      out.push(want);
+      continue;
+    }
+    const fx = was.facingX + (want.facingX - was.facingX) * k;
+    const fy = was.facingY + (want.facingY - was.facingY) * k;
+    const length = Math.hypot(fx, fy);
+    const eased: DrawnCreature = {
+      ...want,
+      x: was.x + (want.x - was.x) * k,
+      y: was.y + (want.y - was.y) * k,
+      facingX: length > 1e-6 ? fx / length : want.facingX,
+      facingY: length > 1e-6 ? fy / length : want.facingY,
+      speed: was.speed + (want.speed - was.speed) * k,
+    };
+    held.set(want.id, eased);
+    out.push(eased);
+  }
+  for (const id of [...held.keys()]) {
+    if (!seen.has(id)) {
+      held.delete(id);
+    }
+  }
+  return out;
+}

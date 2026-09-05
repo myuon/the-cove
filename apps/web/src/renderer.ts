@@ -253,7 +253,9 @@ function drawHatch(
   ctx.translate(width / 2, height / 2);
   ctx.rotate(-0.52);
   ctx.lineWidth = 1;
-  const drift = ((now / 90) % spacing) - spacing;
+  // Light that visibly moves is light nobody believes. A whole spacing every
+  // three seconds was a conveyor belt; this is about a minute.
+  const drift = ((now / 1600) % spacing) - spacing;
   const LEVELS = 4;
   const lanes: number[][] = [[], [], [], []];
   for (let x = -diag + drift; x < diag; x += spacing) {
@@ -413,7 +415,7 @@ function paintField(
   // second**. Grouping by a quantised colour and alpha collapses that to about
   // twenty strokes, and nothing about the picture changes: six levels of alpha
   // is more than an eye resolves in a stroke this thin.
-  const drift = now / 23000;
+  const drift = now / 58000;
   const unit = layout.cell * LATTICE_STEP;
   const base = unit * 0.3;
   const ALPHA_LEVELS = 6;
@@ -866,7 +868,11 @@ function drawCreatureMark(
 
   // The wave travels head to tail: one phase for the animal, and each segment
   // reads it a little later than the one in front.
-  const beat = (0.5 + speedFrac * 2.4) / 1000;
+  // Slow. It was up to three hertz, which is not a fish swimming, it is a
+  // fish in a blender -- and at a tick and a half a second the world around it
+  // moves at a fraction of that, so the body was the fastest thing on screen
+  // by a wide margin.
+  const beat = (0.16 + speedFrac * 0.62) / 1000;
   const phase = now * beat * Math.PI * 2 + creature.id * 2.399963;
   const amplitude = head * body.sway * (0.18 + speedFrac * 0.95);
 

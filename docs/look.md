@@ -146,9 +146,17 @@ are the product.
 
 - A short **trail** behind each creature: a row of shrinking marks, not a
   smear. A path made of marks can be counted; a smear can only be seen.
-- Positions **interpolated** between ticks, as they already are. The
-  simulation is three fixed ticks a second and the render is sixty frames; the
-  visitor should never be able to tell where one tick ends.
+- The world runs at **one and a half fixed ticks a second**, which is slow on
+  purpose and has been slowed twice. This is a thing to watch, not a thing to
+  keep up with.
+- Positions are **interpolated** between ticks and then **eased**. The
+  interpolation is smooth inside a tick and corners at every boundary, because
+  the drawn velocity changes the instant a new snapshot lands; slowing the
+  world down does not fix that, it gives the same corner longer to be looked
+  at. A low-pass on the drawn position, facing and speed rounds it off, with a
+  half-life rather than a per-frame fraction so a slow machine and a fast one
+  ease at the same rate in real time.
+- It costs a little lag, and lag is free here. Nobody is steering anything.
 - Nothing snaps. A creature turns because the reef makes it turn, and the
   drawing should never do in one frame what the reef did over four.
 
