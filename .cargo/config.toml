@@ -1,0 +1,4 @@
+[alias]
+# `cargo t` is the test command. It carries the profile, because `cargo test`
+# cannot default one and a bare `cargo test` silently runs unoptimised.
+t = "test --workspace --profile checked"

@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = ["crates/creature-host"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/myuon/the-cove"
+
+# Cove is pinned by commit, not by version, and that is the whole of what
+# `cove_runtime_version` in a replay identity means here. The crates are not
+# published, a git dependency is therefore the only way in, and a `rev` is the
+# only kind of git dependency a replay can trust: a branch would let the same
+# seed answer differently tomorrow.
+#
+# Bumping this is a deliberate act. It changes what every recorded world means,
+# because fuel is a function of the backend and the backend is what this names.
+[workspace.dependencies]
+cove-diag = { git = "https://github.com/myuon/cove", rev = "1c6bdc064f92b67bfe04fd2e8506dbd27b635d97" }
+cove-ir = { git = "https://github.com/myuon/cove", rev = "1c6bdc064f92b67bfe04fd2e8506dbd27b635d97" }
+cove-runtime = { git = "https://github.com/myuon/cove", rev = "1c6bdc064f92b67bfe04fd2e8506dbd27b635d97" }
+cove-schema = { git = "https://github.com/myuon/cove", rev = "1c6bdc064f92b67bfe04fd2e8506dbd27b635d97" }
+cove-sema = { git = "https://github.com/myuon/cove", rev = "1c6bdc064f92b67bfe04fd2e8506dbd27b635d97" }
+cove-syntax = { git = "https://github.com/myuon/cove", rev = "1c6bdc064f92b67bfe04fd2e8506dbd27b635d97" }
+
+# The tests here run Cove programs rather than merely compiling a harness, and
+# an unoptimised build of the VM is several times slower at it. `checked`
+# inherits release and turns the debug assertions and the overflow checks back
+# on, so nothing an unoptimised build would catch is given up. This is the same
+# lesson the cove repository writes down, arrived at the same way.
+[profile.checked]
+inherits = "release"
+debug-assertions = true
+overflow-checks = true

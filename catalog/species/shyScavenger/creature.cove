@@ -1,0 +1,127 @@
+use contract.ActionResult
+use contract.Cell
+use contract.Decision
+use contract.Intent
+use contract.Observation
+use contract.Reason
+use contract.SelfView
+use instinct.away
+use instinct.nearest
+use instinct.richest
+use instinct.shelter
+use instinct.stepOr
+use instinct.threats
+use instinct.wander
+
+// The shy scavenger: hides first, eats second, and waits for the rest.
+//
+// It is the species the world's refusals are visible through. Cornered by a
+// hunter, with no thicket beside it and nowhere left to step, it hides where
+// it stands -- and a cell that is not a thicket is not one to hide in, so the
+// world refuses the intent and the scavenger loses the tick. That is
+// deliberate: a behaviour that is wrong about the world costs itself a turn,
+// and the tick goes on around it.
+//
+// It costs itself that turn once. `SelfView.last` carries what the world did
+// with the previous intent, so a scavenger that was refused a hide does not
+// ask for the same hide again -- it steps instead, and if it cannot step it
+// rests. That is the one place in this species where the contract's answer
+// back from the host changes what it does, and it is here because a creature
+// that cannot be told it was wrong is a creature that is wrong for as long as
+// it lives.
+//
+// What it is not is idle. It walks for nothing, it smells food it cannot
+// see, and a carcass is worth more than a cell of grass -- but waiting where
+// nothing is going to die is how a scavenger starves, so being hungry is
+// what makes it go looking.
+
+/// The one intent this scavenger answers the tick with, and why.
+export fn decide(view: SelfView, observation: Observation) -> Decision {
+  match nearest(threats(observation.nearby)) {
+    Some(hunter) => return flee(view, hunter.at, observation)
+    None => ()
+  }
+  if observation.here > 0 && view.energy < full() {
+    return Decision(intent: Intent.Eat, reason: Reason.Feeding)
+  }
+  match nearest(observation.nearby) {
+    Some(crowd) => if crowd.away < 2 && view.energy >= searching() {
+      return Decision(
+        intent: stepOr(away(crowd.at, observation), Intent.Rest),
+        reason: Reason.Crowded,
+      )
+    }
+    None => ()
+  }
+  if view.energy < full() {
+    match observation.scent {
+      Some(heading) => return Decision(
+        intent: Intent.Move(heading),
+        reason: Reason.SeekingFood,
+      )
+      None => ()
+    }
+  }
+  match richest(observation) {
+    Some(patch) => Decision(
+      intent: Intent.Move(patch.heading),
+      reason: Reason.SeekingFood,
+    )
+    None => if view.energy < searching() {
+      Decision(intent: wander(view, observation), reason: Reason.Exploring)
+    } else {
+      Decision(intent: Intent.Rest, reason: Reason.Waiting)
+    }
+  }
+}
+
+/// The energy below which a scavenger stops waiting and goes looking.
+///
+/// Waiting is what a scavenger does, and waiting where nothing is going to
+/// die is how one starves. This is the line between the two, and a scavenger
+/// that did not have it sat still until it was dead -- which the run said
+/// plainly, and which reads in the code as a `Rest` that looks perfectly
+/// reasonable.
+fn searching() -> Int {
+  18
+}
+
+/// The energy past which a scavenger stops eating and waits.
+fn full() -> Int {
+  30
+}
+
+/// What to do about a hunter that is already this close.
+///
+/// A shelter is hidden in and a shelter in sight is walked to. A scavenger
+/// with neither, and nowhere left to step, hides where it stands -- unless
+/// the world refused exactly that last tick, in which case it does not ask
+/// twice.
+fn flee(view: SelfView, threat: Cell, observation: Observation) -> Decision {
+  if observation.shelter {
+    return Decision(intent: Intent.Hide, reason: Reason.Sheltering)
+  }
+  match shelter(observation) {
+    Some(heading) => Decision(
+      intent: Intent.Move(heading),
+      reason: Reason.Sheltering,
+    )
+    None => Decision(
+      intent: stepOr(away(threat, observation), lastResort(view)),
+      reason: Reason.FleeingThreat,
+    )
+  }
+}
+
+/// What is left when there is nowhere to step and nowhere to hide.
+///
+/// Hiding where it stands, once. The world refuses that in a cell that is not
+/// a shelter, and `view.last` is how the scavenger finds out; asked again in
+/// the same corner it rests instead, which is refused by nothing and costs
+/// the same tick.
+fn lastResort(view: SelfView) -> Intent {
+  match view.last {
+    ActionResult.Refused(_) => Intent.Rest
+    _ => Intent.Hide
+  }
+}

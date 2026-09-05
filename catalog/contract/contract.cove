@@ -1,0 +1,364 @@
+// The contract between the world and a creature, and nothing else.
+//
+// A species module imports this one, and `instinct`, which is written
+// against this one, and nothing else. That is the whole of the sandbox: a
+// species cannot name the simulation, so it cannot read the world it is not
+// being shown and cannot write the world at all. What it is handed are
+// values -- a `SelfView`, an `Observation` holding immutable arrays -- and
+// Cove copies a value into a call, so there is nothing for a behaviour to
+// reach back through. No runtime check enforces any of this; the module
+// boundary and the copy rule do.
+//
+// The host mirrors every type here in Rust, field for field and in order,
+// because `Vm::invoke` checks an argument against the declaration the checker
+// resolved before the first instruction runs. A field added here is a field
+// the host must add, and the boundary says so rather than reading past the
+// end of a struct.
+
+/// What a creature does for a living.
+///
+/// Six roles rather than one case per species, because the catalog grows to
+/// twelve species and a behaviour asks what something *does*, not what it is
+/// called. `SelfView.species` is the catalog identifier for the cases where a
+/// creature needs to tell its own kind apart from another kind in the same
+/// role.
+export enum Role {
+  /// Eats what grows where it stands.
+  Grazer
+  /// Waits in cover for something to come close.
+  Ambusher
+  /// Walks the world looking for something to eat.
+  Hunter
+  /// Eats what is already dead, and smells it from further than it sees.
+  Scavenger
+  /// Feeds and warns its own kind.
+  Cooperator
+  /// One legible rule and nothing else.
+  Wildcard
+}
+
+impl Role {
+  /// The word this role is written with.
+  export fn name(self) -> String {
+    match self {
+      Role.Grazer => "grazer"
+      Role.Ambusher => "ambusher"
+      Role.Hunter => "hunter"
+      Role.Scavenger => "scavenger"
+      Role.Cooperator => "cooperator"
+      Role.Wildcard => "wildcard"
+    }
+  }
+
+  /// Whether a creature in this role hunts other creatures.
+  export fn hunts(self) -> Bool {
+    match self {
+      Role.Ambusher => true
+      Role.Hunter => true
+      _ => false
+    }
+  }
+
+  /// Whether a hunter will chase a creature in this role.
+  export fn isPrey(self) -> Bool {
+    match self {
+      Role.Grazer => true
+      Role.Scavenger => true
+      Role.Cooperator => true
+      Role.Wildcard => true
+      _ => false
+    }
+  }
+}
+
+/// A place in the grid, and also a step from one place to another.
+///
+/// One type for both because a step is what the difference of two places is,
+/// and a second struct with the same two fields would only make the addition
+/// need a conversion.
+export struct Cell {
+  x: Int
+  y: Int
+}
+
+/// The four directions a step may take.
+export enum Heading {
+  North
+  East
+  South
+  West
+}
+
+impl Heading {
+  /// The step this heading is.
+  export fn step(self) -> Cell {
+    match self {
+      Heading.North => Cell(x: 0, y: -1)
+      Heading.East => Cell(x: 1, y: 0)
+      Heading.South => Cell(x: 0, y: 1)
+      Heading.West => Cell(x: -1, y: 0)
+    }
+  }
+
+  /// The word this heading is written with.
+  export fn name(self) -> String {
+    match self {
+      Heading.North => "north"
+      Heading.East => "east"
+      Heading.South => "south"
+      Heading.West => "west"
+    }
+  }
+}
+
+/// Every heading, in the order a tie is broken in.
+///
+/// The order is north, east, south, west, and it is written down here rather
+/// than left to each behaviour, because two species that broke a tie
+/// differently would make the same run depend on which one moved first.
+export fn headings() -> Array<Heading> {
+  [Heading.North, Heading.East, Heading.South, Heading.West]
+}
+
+/// What a creature is told about itself.
+export struct SelfView {
+  id: Int
+  /// Which catalog entry this creature was spawned from.
+  species: Int
+  role: Role
+  at: Cell
+  energy: Int
+  age: Int
+  hidden: Bool
+  /// What the world did with the intent this creature answered last tick.
+  ///
+  /// It is here so that a behaviour can be wrong about the world and find
+  /// out. A refusal costs a tick, and a species that never reads this one
+  /// pays it again every tick for as long as it is wrong.
+  last: ActionResult
+}
+
+/// Another creature, as this one can see it.
+///
+/// `away` is the number of steps between the two, so a behaviour never has to
+/// compute a distance and two behaviours cannot compute it differently.
+export struct Sighting {
+  id: Int
+  species: Int
+  role: Role
+  at: Cell
+  away: Int
+  hidden: Bool
+}
+
+/// One of the four cells a creature could step onto.
+export struct Patch {
+  heading: Heading
+  at: Cell
+  food: Int
+  shelter: Bool
+  /// Whether this cell is off the edge of the world.
+  outside: Bool
+  /// Whether a creature stood here when the tick began.
+  occupied: Bool
+}
+
+/// Everything a creature is told about the world this tick.
+///
+/// It is bounded: four patches, and at most `sightLimit()` sightings, nearest
+/// first. A behaviour that wants to see further cannot, which is what makes
+/// the cost of a tick a function of the population and not of its square.
+export struct Observation {
+  tick: Int
+  /// How much food is in the cell this creature is standing in.
+  here: Int
+  /// Whether the cell this creature is standing in is a shelter.
+  shelter: Bool
+  around: Array<Patch>
+  nearby: Array<Sighting>
+  /// The way to the most food within this creature's range, for a role that
+  /// can smell one. It is `None` for the roles that cannot, and it is what
+  /// makes a scavenger something other than a slow grazer: a carcass three
+  /// cells away is invisible to everything here except the thing that eats
+  /// carcasses.
+  scent: Option<Heading>
+}
+
+/// How many sightings an observation carries, at most.
+export fn sightLimit() -> Int {
+  4
+}
+
+/// Whether this role can smell food it cannot see.
+export fn smells(role: Role) -> Bool {
+  match role {
+    Role.Scavenger => true
+    _ => false
+  }
+}
+
+/// How far a creature in this role can see, in steps.
+///
+/// The hunter's is the long one, and it is what makes a hunter a hunter: prey
+/// walks away from what it can see, so a hunter that saw no further than its
+/// prey could only ever find one by walking into it. It is still bounded, and
+/// so is what it can be told about what it sees.
+export fn sightRange(role: Role) -> Int {
+  match role {
+    Role.Grazer => 2
+    Role.Ambusher => 2
+    Role.Hunter => 3
+    Role.Scavenger => 2
+    Role.Cooperator => 2
+    Role.Wildcard => 2
+  }
+}
+
+/// The one thing a behaviour asks the world for this tick.
+///
+/// Exactly one, whatever the creature would rather do. A behaviour that wants
+/// to move and eat has to decide which, and the world resolves what it said
+/// rather than what it meant.
+export enum Intent {
+  Move(Heading)
+  Eat
+  Hunt(Int)
+  Hide
+  Rest
+}
+
+impl Intent {
+  /// The word this intent is written with.
+  export fn name(self) -> String {
+    match self {
+      Intent.Move(heading) => "move-{heading.name()}"
+      Intent.Eat => "eat"
+      Intent.Hunt(id) => "hunt-{id}"
+      Intent.Hide => "hide"
+      Intent.Rest => "rest"
+    }
+  }
+}
+
+/// Why a behaviour asked for what it asked for.
+///
+/// A small closed vocabulary, because this is what a visitor is shown. The
+/// interface turns one of these into a sentence about a creature it is
+/// watching, so a species that invented its own reason would be a species
+/// nobody could be told about. What a reason does not carry is the detail --
+/// which predator, which cell -- because the trace already has it and a
+/// second copy would be a second thing to keep true.
+export enum Reason {
+  /// Something that hunts this creature is close enough to matter.
+  FleeingThreat
+  /// Going to where the food is.
+  SeekingFood
+  /// Eating what is here.
+  Feeding
+  /// Getting into, or staying in, cover.
+  Sheltering
+  /// Going after something to eat that is alive.
+  Hunting
+  /// Too many others too close, whatever they are.
+  Crowded
+  /// Nothing in particular, and moving anyway.
+  Exploring
+  /// Nothing in particular, and staying put.
+  Waiting
+}
+
+impl Reason {
+  /// The word this reason is written with.
+  ///
+  /// A stable identifier rather than a sentence: the sentence is written in
+  /// the interface, in the visitor's language, and a reason that carried its
+  /// own prose would have to be translated in the catalog.
+  export fn name(self) -> String {
+    match self {
+      Reason.FleeingThreat => "fleeing_threat"
+      Reason.SeekingFood => "seeking_food"
+      Reason.Feeding => "feeding"
+      Reason.Sheltering => "sheltering"
+      Reason.Hunting => "hunting"
+      Reason.Crowded => "crowded"
+      Reason.Exploring => "exploring"
+      Reason.Waiting => "waiting"
+    }
+  }
+}
+
+/// What one creature answered one tick with.
+///
+/// The intent is what the world resolves and the reason is what the visitor
+/// is told. They are one value because a behaviour that returned them
+/// separately could return an intent and a reason that did not match, and
+/// nothing would notice.
+export struct Decision {
+  intent: Intent
+  reason: Reason
+}
+
+impl Decision {
+  /// This decision, written the way a report writes one.
+  export fn line(self) -> String {
+    "{self.intent.name()} because={self.reason.name()}"
+  }
+}
+
+/// What the world did with an intent.
+///
+/// Every case but the last is something that happened. `Refused` is the
+/// world declining an intent it will not carry out -- a step off the edge, a
+/// meal in an empty cell, a hunt of a creature that is not there -- and it
+/// costs the creature that tick and nothing else.
+export enum ActionResult {
+  /// This creature has not acted yet.
+  Spawned
+  Moved(Heading)
+  Blocked(Heading)
+  Ate(Int)
+  Hunted(Int)
+  Missed(Int)
+  Hid
+  Rested
+  Refused(String)
+}
+
+impl ActionResult {
+  /// The word this result is written with.
+  export fn name(self) -> String {
+    match self {
+      ActionResult.Spawned => "spawned"
+      ActionResult.Moved(heading) => "moved-{heading.name()}"
+      ActionResult.Blocked(heading) => "blocked-{heading.name()}"
+      ActionResult.Ate(amount) => "ate-{amount}"
+      ActionResult.Hunted(id) => "hunted-{id}"
+      ActionResult.Missed(id) => "missed-{id}"
+      ActionResult.Hid => "hid"
+      ActionResult.Rested => "rested"
+      ActionResult.Refused(_) => "refused"
+    }
+  }
+
+  /// Why the world refused this intent, for a result that is a refusal.
+  export fn refusal(self) -> Option<String> {
+    match self {
+      ActionResult.Refused(why) => Some(why)
+      _ => None
+    }
+  }
+}
+
+/// The distance between two cells, in steps.
+export fn stepsBetween(from: Cell, to: Cell) -> Int {
+  span(from.x, to.x) + span(from.y, to.y)
+}
+
+/// The distance between two coordinates.
+fn span(from: Int, to: Int) -> Int {
+  if from > to {
+    from - to
+  } else {
+    to - from
+  }
+}
