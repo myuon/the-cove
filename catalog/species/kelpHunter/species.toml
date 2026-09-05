@@ -25,7 +25,7 @@ forage = 4
 capacity = 675
 
 [visual]
-colour = "#d4553c"
+colour = "#ff5a48"
 # A shape as well as a colour, because a tank told apart by hue alone is a
 # tank a colour-blind visitor cannot read, and V0 says every species must be
 # visually distinguishable.

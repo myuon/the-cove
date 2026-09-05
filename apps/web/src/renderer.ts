@@ -1,43 +1,45 @@
-// Drawing the tank: a dim, slow, luminous aquarium — not a diagram of one.
+// Drawing the reef: a field of perception, in line work.
 //
-// This file is the whole of the art direction described in `docs/look.md`;
-// read that first. The two things it marks load-bearing are the sight
-// circle and the reaction line — everything else here (the water, the
-// light, the kelp's sway, the motes) is atmosphere and could be deleted
-// without changing what a visitor can learn from the tank, only how it
-// feels to watch.
+// The direction is `docs/look.md`. The short version is that this world *is*
+// a field of forces and beliefs, so the honest way to draw it is to draw the
+// field rather than to illustrate the animals in it. Everything here is line
+// work over near-black: a lattice, a few families of parallel lines, thin
+// rings, and one geometric mark per creature. Nothing is a soft blob, because
+// soft over soft is mush and mush is what the first pass was.
+//
+// # The lattice is the picture and it is also the product
+//
+// A regular grid of points, drawn dim, and brightened and pushed outward
+// wherever a creature can see. That is a creature's sight radius rendered as
+// something rather than as an annotation — the water visibly bends around
+// what is being perceived — and it is the whole of what `docs/look.md` means
+// by calling perception load-bearing. Delete every other thing in this file
+// and the reef would still say what it is about.
 //
 // # The one thing that makes this file possible
 //
 // The renderer is outside the determinism rule. Nothing the simulation does
-// depends on a single pixel this file draws, so this is the one place in
-// the whole page allowed to call `Math.sin`, read `performance.now()`, or
-// seed its own randomness — every swaying frond and drifting mote comes out
-// of that freedom, and none of it is allowed to feed back into a decision.
+// depends on a single pixel here, so this is the one place in the page
+// allowed to call `Math.sin`, read `performance.now()`, or seed its own
+// randomness — and none of it is allowed to feed back into a decision.
 //
 // # What is reef-space and what is screen-space
 //
-// The water's gradient, the light bands, the motes and the vignette are
-// drawn in plain canvas pixels (`cssWidth` by `cssHeight`) and never touch
-// `layout` — they are the tank's glass, not its contents, so they hold
-// still while a visitor pans or zooms the camera around inside it. Every
-// creature, every patch of food, every kelp bed, and the two load-bearing
-// overlays are drawn through `layout.ts`'s `toPixel`, which is the reef's
-// own coordinate system and moves exactly as the camera does.
+// The ground, the drifting hatch and the vignette are drawn in plain canvas
+// pixels and never touch `layout` — they are the glass, not the contents, so
+// they hold still while the camera pans. The lattice, the kelp, the food, the
+// creatures and the two load-bearing overlays go through `layout.ts`'s
+// `toPixel`, which is the reef's own coordinate system.
 //
 // # What a non-selected creature's reaction line is approximating
 //
-// `contract.cove`'s `Observation` is bounded and only ever handed out for
-// the one creature `tank_focus` is watching — the snapshot has no `nearby`
-// for anybody else. So the reaction line and the sight circle for every
-// *other* creature are this file's own approximation, built from the full
-// snapshot rather than from a belief: the nearest creature of a hunting role
-// within a per-role sight radius mirroring `sight_range` in
-// `crates/simulation/src/world.rs`. It can point at a different creature
-// than the one actually driving that decision when several are clustered,
-// which is a cost worth paying — the alternative is either no line at all
-// for the fourteen creatures nobody has clicked, or hiding the one thing
-// `docs/look.md` calls the reason this was worth rebuilding.
+// `contract.cove`'s `Observation` is bounded and only ever handed out for the
+// one creature `tank_focus` is watching. So the sight radius and the reaction
+// line for every *other* creature are this file's own approximation, built
+// from the full snapshot rather than from a belief. It can point at a
+// different creature than the one actually driving a decision when several
+// are clustered, which is a cost worth paying: the alternative is no line at
+// all for the thirteen creatures nobody has clicked.
 
 import { toPixel, type Layout } from "./layout.js";
 import { HUNTING_ROLES, PREY_ROLES, reactionTarget } from "./sentence.js";
@@ -125,429 +127,6 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-// --- The water: a gradient, light bands, motes, a vignette. All of it
-// screen-space and all of it cached across resizes rather than rebuilt
-// every frame — `docs/look.md`'s own performance note. ---
-
-interface ScreenCache {
-  width: number;
-  height: number;
-  water: CanvasGradient;
-  vignette: CanvasGradient;
-  band: CanvasGradient;
-}
-
-let screenCache: ScreenCache | null = null;
-
-function ensureScreenCache(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-): ScreenCache {
-  if (
-    screenCache &&
-    screenCache.width === width &&
-    screenCache.height === height
-  ) {
-    return screenCache;
-  }
-  const water = ctx.createLinearGradient(0, 0, 0, height);
-  water.addColorStop(0, "#0a2b39");
-  water.addColorStop(1, "#03101c");
-
-  const vignette = ctx.createRadialGradient(
-    width / 2,
-    height / 2,
-    Math.min(width, height) * 0.32,
-    width / 2,
-    height / 2,
-    Math.hypot(width, height) * 0.62,
-  );
-  vignette.addColorStop(0, "rgba(0, 0, 0, 0)");
-  vignette.addColorStop(1, "rgba(0, 0, 12, 0.55)");
-
-  const diag = Math.hypot(width, height);
-  const band = ctx.createLinearGradient(-diag * 0.09, 0, diag * 0.09, 0);
-  band.addColorStop(0, "rgba(210, 240, 255, 0)");
-  band.addColorStop(0.5, "rgba(210, 240, 255, 1)");
-  band.addColorStop(1, "rgba(210, 240, 255, 0)");
-
-  screenCache = { width, height, water, vignette, band };
-  return screenCache;
-}
-
-function drawWater(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  cache: ScreenCache,
-): void {
-  ctx.fillStyle = cache.water;
-  ctx.fillRect(0, 0, width, height);
-}
-
-const LIGHT_BANDS = 3;
-
-function drawLightBands(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  now: number,
-  cache: ScreenCache,
-): void {
-  const diag = Math.hypot(width, height);
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, 0, width, height);
-  ctx.clip();
-  for (let i = 0; i < LIGHT_BANDS; i += 1) {
-    const period = 26000 + i * 8000;
-    const phase = ((now / period + i / LIGHT_BANDS) % 1) - 0.5;
-    ctx.save();
-    ctx.translate(width / 2, height / 2);
-    ctx.rotate(-0.4 + i * 0.11);
-    ctx.translate(phase * diag * 2.2, 0);
-    ctx.globalAlpha = 0.26 - i * 0.05;
-    ctx.fillStyle = cache.band;
-    ctx.fillRect(-diag * 0.09, -diag, diag * 0.18, diag * 2);
-    ctx.restore();
-  }
-  ctx.restore();
-}
-
-function drawVignette(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  cache: ScreenCache,
-): void {
-  ctx.fillStyle = cache.vignette;
-  ctx.fillRect(0, 0, width, height);
-}
-
-interface MoteDef {
-  readonly fx: number;
-  readonly fy: number;
-  readonly phase: number;
-  readonly fadePeriod: number;
-  readonly risePeriod: number;
-  readonly swayPx: number;
-  readonly swayPeriod: number;
-  readonly sizePx: number;
-}
-
-const MOTE_COUNT = 60;
-const MOTES: readonly MoteDef[] = (() => {
-  const draw = mulberry32(0x5eed_0905);
-  const motes: MoteDef[] = [];
-  for (let i = 0; i < MOTE_COUNT; i += 1) {
-    motes.push({
-      fx: draw(),
-      fy: draw(),
-      phase: draw() * Math.PI * 2,
-      fadePeriod: 9000 + draw() * 9000,
-      risePeriod: 45000 + draw() * 45000,
-      swayPx: 6 + draw() * 14,
-      swayPeriod: 6000 + draw() * 6000,
-      sizePx: 0.6 + draw() * 1.5,
-    });
-  }
-  return motes;
-})();
-
-function drawMotes(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  now: number,
-): void {
-  ctx.save();
-  ctx.fillStyle = "#dff6ff";
-  for (const mote of MOTES) {
-    const rise = (now / mote.risePeriod) % 1;
-    const y = height * (1 - ((mote.fy + rise) % 1));
-    const sway = Math.sin(now / mote.swayPeriod + mote.phase) * mote.swayPx;
-    const x = mote.fx * width + sway;
-    const alpha =
-      0.12 + 0.16 * (0.5 + 0.5 * Math.sin(now / mote.fadePeriod + mote.phase));
-    ctx.globalAlpha = alpha;
-    ctx.beginPath();
-    ctx.arc(x, y, mote.sizePx, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.restore();
-}
-
-// --- Kelp: not circles. A clump of fronds rooted along a bed's lower edge,
-// swaying out of phase on a slow sine. Drawn twice — once behind everything
-// (`drawKelpBack`) and once, only over a hidden creature, in front of it
-// (`drawKelpFrondsOver`) — so a creature standing in the weed reads as
-// inside it rather than merely tagged `hidden`. ---
-
-const KELP_COLOUR = "70, 196, 176";
-
-interface Frond {
-  readonly rootX: number;
-  readonly rootY: number;
-  readonly height: number;
-  readonly phase: number;
-  readonly period: number;
-  readonly bend: number;
-  readonly alpha: number;
-  readonly width: number;
-}
-
-// Kelp never moves once seeded (`crates/simulation/src/world.rs`: "Seeded
-// once, and never moves"), so a bed's fronds are cached by its own position
-// rather than rebuilt every frame — the one allocation this file would
-// otherwise repeat sixty times a second for no reason, since the shape is
-// the same fronds every time regardless of `now`. Keyed by position and not
-// invalidated across "New world": at five beds a session, the worst case is
-// a few dozen stale entries after a long run of reopening the tank, which
-// costs nothing worth a reset hook this file does not otherwise need.
-const frondCache = new Map<string, Frond[]>();
-
-function frondsOf(bed: Bed): Frond[] {
-  const key = `${bed.x},${bed.y},${bed.radius}`;
-  const cached = frondCache.get(key);
-  if (cached) {
-    return cached;
-  }
-  const count = 13 + Math.floor(hash2(bed.x, bed.y) * 7);
-  const fronds: Frond[] = [];
-  for (let i = 0; i < count; i += 1) {
-    const h = hash2(bed.x + i * 17.13, bed.y - i * 9.71);
-    // Jittered rather than evenly spaced: a row of fronds at equal intervals
-    // reads as a fence, and the point of a bed is that it is a thicket.
-    const spread =
-      (count > 1 ? (i / (count - 1)) * 2 - 1 : 0) +
-      (hash2(bed.y + i * 3.7, bed.x - i * 5.3) - 0.5) * 0.35;
-    const rootX = bed.x + spread * bed.radius * 0.82;
-    const drop = bed.radius * bed.radius - (spread * bed.radius * 0.82) ** 2;
-    const rootY = bed.y + Math.sqrt(Math.max(0, drop)) * 0.92;
-    fronds.push({
-      rootX,
-      rootY,
-      height: bed.radius * (0.4 + h * 0.45),
-      phase: h * Math.PI * 2,
-      period: 6500 + h * 5500,
-      bend: 0.18 + hash2(bed.x * 3 + i, bed.y * 5 - i) * 0.3,
-      alpha: 0.26 + h * 0.3,
-      width: 0.7 + h * 0.5,
-    });
-  }
-  frondCache.set(key, fronds);
-  return fronds;
-}
-
-function drawFrond(
-  ctx: CanvasRenderingContext2D,
-  layout: Layout,
-  bed: Bed,
-  frond: Frond,
-  now: number,
-  alphaMul: number,
-): void {
-  const sway = Math.sin(now / frond.period + frond.phase);
-  const root = toPixel(layout, frond.rootX, frond.rootY);
-  const tip = toPixel(
-    layout,
-    frond.rootX + frond.bend * bed.radius * sway,
-    frond.rootY - frond.height,
-  );
-  const mid = toPixel(
-    layout,
-    frond.rootX + frond.bend * bed.radius * sway * 0.45,
-    frond.rootY - frond.height * 0.5,
-  );
-  ctx.save();
-  ctx.globalAlpha = frond.alpha * alphaMul;
-  ctx.strokeStyle = `rgba(${KELP_COLOUR}, 1)`;
-  ctx.lineWidth = Math.max(1, layout.cell * frond.width * 0.09);
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.moveTo(root.px, root.py);
-  ctx.quadraticCurveTo(mid.px, mid.py, tip.px, tip.py);
-  ctx.stroke();
-  ctx.restore();
-}
-
-function drawKelpBack(
-  ctx: CanvasRenderingContext2D,
-  layout: Layout,
-  kelp: readonly Bed[],
-  now: number,
-): void {
-  for (const bed of kelp) {
-    // A soft wash under the fronds so the bed reads as one thing even where
-    // its fronds are sparse — kelp is the one load-bearing shape on the
-    // reef, and a visitor has to be able to find it at a glance.
-    const centre = toPixel(layout, bed.x, bed.y);
-    ctx.save();
-    const wash = ctx.createRadialGradient(
-      centre.px,
-      centre.py,
-      bed.radius * layout.cell * 0.15,
-      centre.px,
-      centre.py,
-      bed.radius * layout.cell,
-    );
-    wash.addColorStop(0, `rgba(${KELP_COLOUR}, 0.30)`);
-    wash.addColorStop(0.7, `rgba(${KELP_COLOUR}, 0.10)`);
-    wash.addColorStop(1, `rgba(${KELP_COLOUR}, 0)`);
-    ctx.fillStyle = wash;
-    ctx.beginPath();
-    ctx.arc(centre.px, centre.py, bed.radius * layout.cell, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-    for (const frond of frondsOf(bed)) {
-      drawFrond(ctx, layout, bed, frond, now, 1);
-    }
-  }
-}
-
-function drawKelpFrondsOver(
-  ctx: CanvasRenderingContext2D,
-  layout: Layout,
-  bed: Bed,
-  atX: number,
-  now: number,
-): void {
-  const fronds = frondsOf(bed)
-    .slice()
-    .sort((a, b) => Math.abs(a.rootX - atX) - Math.abs(b.rootX - atX))
-    .slice(0, 2);
-  for (const frond of fronds) {
-    drawFrond(ctx, layout, bed, frond, now, 1.6);
-  }
-}
-
-// --- Food: soft blobs built from a few layered, translucent circles rather
-// than a fresh radial gradient every frame — cheap, and the effect reads
-// the same. A carcass gets a warmer palette and, for a short while after it
-// lands, a bloom instead of a fade-in. ---
-
-function foodPulse(index: number, now: number): number {
-  const phase = hash2(index * 12.9898, index * 78.233) * Math.PI * 2;
-  const period = 4200 + hash2(index * 3.1, index * 7.7) * 3200;
-  return 0.85 + 0.15 * Math.sin(now / period + phase);
-}
-
-function drawFood(
-  ctx: CanvasRenderingContext2D,
-  layout: Layout,
-  food: readonly Morsel[],
-  carcasses: ReadonlyMap<number, number>,
-  now: number,
-): void {
-  for (let index = 0; index < food.length; index += 1) {
-    const morsel = food[index];
-    if (!morsel || morsel.amount <= 0) {
-      continue;
-    }
-    const centre = toPixel(layout, morsel.x, morsel.y);
-    const pulse = foodPulse(index, now);
-    const fullness = Math.min(1, morsel.amount / 4);
-    const bornAt = carcasses.get(index);
-    const bloomAge = bornAt === undefined ? Infinity : now - bornAt;
-    const blooming = bloomAge >= 0 && bloomAge < CARCASS_BLOOM_MS;
-    const outer = blooming
-      ? "223, 110, 90"
-      : "150, 214, 150";
-    const inner = blooming ? "255, 176, 96" : "224, 208, 96";
-
-    ctx.save();
-    // Dimmer and smaller than it looks like it should be on paper. Food is
-    // everywhere and creatures are few, so anything the food does at full
-    // strength it does thirty times at once and wins the picture.
-    // One gradient rather than three stacked discs. The discs drew visible
-    // edges where they met, so every mouthful read as a ring — a target rather
-    // than a smudge of something growing. And dimmer and smaller than it looks
-    // like it should be on paper: food is everywhere and creatures are few, so
-    // anything the food does at full strength it does thirty times at once and
-    // wins the picture.
-    const r = morsel.radius * layout.cell * (0.5 + fullness * 0.4);
-    const core = (0.2 + fullness * 0.22) * pulse;
-    const glow = ctx.createRadialGradient(
-      centre.px,
-      centre.py,
-      0,
-      centre.px,
-      centre.py,
-      r,
-    );
-    glow.addColorStop(0, `rgba(${inner}, ${core})`);
-    glow.addColorStop(0.45, `rgba(${outer}, ${core * 0.42})`);
-    glow.addColorStop(1, `rgba(${outer}, 0)`);
-    ctx.fillStyle = glow;
-    ctx.beginPath();
-    ctx.arc(centre.px, centre.py, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    if (blooming) {
-      const t = bloomAge / CARCASS_BLOOM_MS;
-      ctx.save();
-      ctx.globalAlpha = (1 - t) * 0.6;
-      ctx.strokeStyle = "rgba(255, 140, 110, 1)";
-      ctx.lineWidth = Math.max(1, layout.cell * 0.08);
-      ctx.beginPath();
-      ctx.arc(centre.px, centre.py, r * (0.4 + t * 1.4), 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
-    }
-  }
-}
-
-// --- Trails: a short fading path behind each creature. ---
-
-function drawTrails(
-  ctx: CanvasRenderingContext2D,
-  layout: Layout,
-  trails: ReadonlyMap<number, readonly TrailPoint[]>,
-  catalog: readonly CatalogEntry[],
-  creatures: readonly DrawnCreature[],
-  now: number,
-): void {
-  const speciesOf = new Map(creatures.map((c) => [c.id, c.species]));
-  for (const [id, points] of trails) {
-    const entry = catalog[speciesOf.get(id) ?? -1];
-    if (!entry || points.length < 2) {
-      continue;
-    }
-    ctx.save();
-    ctx.strokeStyle = entry.colour;
-    ctx.lineCap = "round";
-    ctx.lineWidth = Math.max(1, layout.cell * 0.05);
-    for (let i = 0; i < points.length - 1; i += 1) {
-      const a = points[i];
-      const b = points[i + 1];
-      if (!a || !b) {
-        continue;
-      }
-      const age = now - a.t;
-      const life = 1 - age / TRAIL_MS;
-      if (life <= 0) {
-        continue;
-      }
-      const pa = toPixel(layout, a.x, a.y);
-      const pb = toPixel(layout, b.x, b.y);
-      ctx.globalAlpha = life * 0.28;
-      ctx.beginPath();
-      ctx.moveTo(pa.px, pa.py);
-      ctx.lineTo(pb.px, pb.py);
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-}
-
-// --- The sight circle and the reaction line — the two load-bearing pieces.
-// ---
-
-/** Mirrors `sight_range` in `crates/simulation/src/world.rs`, in reef units.
- * Used only to draw an approximate ring on a creature nobody has clicked —
- * see the module comment for why this cannot be exact. */
 const APPROX_SIGHT_BY_ROLE: Readonly<Record<string, number>> = {
   grazer: 14,
   ambusher: 14,
@@ -564,60 +143,6 @@ function approxSight(role: string | undefined): number {
   return APPROX_SIGHT_BY_ROLE[role] ?? 14;
 }
 
-function drawSightCircle(
-  ctx: CanvasRenderingContext2D,
-  layout: Layout,
-  px: number,
-  py: number,
-  sightUnits: number,
-  selected: boolean,
-): void {
-  ctx.save();
-  ctx.globalAlpha = selected ? 0.32 : 0.05;
-  ctx.strokeStyle = selected ? "#eaffff" : "#bfe9ff";
-  ctx.lineWidth = Math.max(0.6, layout.cell * (selected ? 0.035 : 0.02));
-  ctx.beginPath();
-  ctx.arc(px, py, sightUnits * layout.cell, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.restore();
-}
-
-const REASON_LINE_COLOUR: Readonly<Record<string, string>> = {
-  fleeing_threat: "255, 138, 101",
-  hunting: "212, 85, 60",
-  sheltering: `${KELP_COLOUR}`,
-  seeking_food: "180, 224, 150",
-  crowded: "196, 180, 224",
-};
-
-function drawReactionLine(
-  ctx: CanvasRenderingContext2D,
-  layout: Layout,
-  fromX: number,
-  fromY: number,
-  toX: number,
-  toY: number,
-  reason: string,
-  selected: boolean,
-): void {
-  const colour = REASON_LINE_COLOUR[reason] ?? "255, 255, 255";
-  const from = toPixel(layout, fromX, fromY);
-  const to = toPixel(layout, toX, toY);
-  ctx.save();
-  ctx.globalAlpha = selected ? 0.55 : 0.28;
-  ctx.strokeStyle = `rgba(${colour}, 1)`;
-  ctx.lineWidth = Math.max(0.6, layout.cell * (selected ? 0.05 : 0.03));
-  ctx.beginPath();
-  ctx.moveTo(from.px, from.py);
-  ctx.lineTo(to.px, to.py);
-  ctx.stroke();
-  ctx.restore();
-}
-
-/** The approximate target a non-selected creature's `fleeing_threat` or
- * `hunting` line points to — see the module comment. `null` for every other
- * reason, matching `docs/look.md`'s "only when the reason is
- * `fleeing_threat` or `hunting`". */
 function approxReactionTarget(
   self: DrawnCreature,
   catalog: readonly CatalogEntry[],
@@ -656,113 +181,368 @@ function approxReactionTarget(
   return best ? { x: best.x, y: best.y } : null;
 }
 
-// --- One creature: a body and a tail, oriented along `facing`, undulating
-// with `speed`. The single biggest "alive" signal on the reef, and the one
-// thing the grid version never had — everything there moved one cell per
-// tick, so a fleeing creature was animated exactly like a browsing one. ---
 
-interface Silhouette {
-  readonly lengthMul: number;
-  readonly widthMul: number;
-  readonly tailMul: number;
-  readonly forked: boolean;
-  readonly shell: boolean;
+// --- The glass: ground, a drifting hatch, a vignette. Screen space. ---
+
+const GROUND_TOP = "#071320";
+const GROUND_BOTTOM = "#02050b";
+const LINE = "168, 226, 255";
+
+interface ScreenCache {
+  readonly width: number;
+  readonly height: number;
+  readonly ground: CanvasGradient;
+  readonly vignette: CanvasGradient;
 }
 
-const SILHOUETTES: Readonly<Record<string, Silhouette>> = {
-  round: { lengthMul: 1.0, widthMul: 1.0, tailMul: 1.05, forked: false, shell: false },
-  wedge: { lengthMul: 1.55, widthMul: 0.72, tailMul: 1.35, forked: true, shell: false },
-  ring: { lengthMul: 0.82, widthMul: 0.82, tailMul: 1.6, forked: false, shell: false },
-  spiral: { lengthMul: 0.85, widthMul: 1.2, tailMul: 0.65, forked: false, shell: true },
+let screenCache: ScreenCache | null = null;
+
+function ensureScreenCache(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+): ScreenCache {
+  if (screenCache && screenCache.width === width && screenCache.height === height) {
+    return screenCache;
+  }
+  const ground = ctx.createLinearGradient(0, 0, 0, height);
+  ground.addColorStop(0, GROUND_TOP);
+  ground.addColorStop(1, GROUND_BOTTOM);
+  const vignette = ctx.createRadialGradient(
+    width / 2,
+    height / 2,
+    Math.min(width, height) * 0.34,
+    width / 2,
+    height / 2,
+    Math.hypot(width, height) * 0.62,
+  );
+  vignette.addColorStop(0, "rgba(0, 0, 0, 0)");
+  vignette.addColorStop(1, "rgba(0, 0, 0, 0.72)");
+  screenCache = { width, height, ground, vignette };
+  return screenCache;
+}
+
+function drawGround(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  cache: ScreenCache,
+): void {
+  ctx.fillStyle = cache.ground;
+  ctx.fillRect(0, 0, width, height);
+}
+
+/// Light as a hatch rather than a shaft.
+///
+/// Parallel lines at a fixed angle, drifting slowly across, with the spacing
+/// held constant so the whole family reads as one ruled surface. A soft
+/// gradient shaft was tried first and it was the thing that made the picture
+/// look blurred: there was nothing crisp anywhere for the eye to hold on to.
+function drawHatch(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  now: number,
+): void {
+  const spacing = 26;
+  const diag = Math.hypot(width, height);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, width, height);
+  ctx.clip();
+  ctx.translate(width / 2, height / 2);
+  ctx.rotate(-0.52);
+  ctx.lineWidth = 1;
+  const drift = ((now / 90) % spacing) - spacing;
+  for (let x = -diag + drift; x < diag; x += spacing) {
+    // A slow swell across the family, so the light is never a static ruling.
+    const swell = 0.5 + 0.5 * Math.sin(x * 0.004 + now / 5200);
+    ctx.strokeStyle = `rgba(${LINE}, ${0.008 + swell * 0.022})`;
+    ctx.beginPath();
+    ctx.moveTo(x, -diag);
+    ctx.lineTo(x, diag);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawVignette(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  cache: ScreenCache,
+): void {
+  ctx.fillStyle = cache.vignette;
+  ctx.fillRect(0, 0, width, height);
+}
+
+// --- The lattice: the reef's own field, and what perception looks like. ---
+
+/// How far apart the lattice points sit, in reef units.
+const LATTICE_STEP = 2.0;
+/// How far a point is pushed away from a creature that can see it, at most.
+const LATTICE_PUSH = 0.7;
+
+/**
+ * The field, brightened and displaced wherever something is looking.
+ *
+ * Every point is dim on its own. A creature within its own sight radius
+ * lifts the points around it and pushes them outward, falling off to nothing
+ * at the edge of what it can see, so a sight range is drawn as a *disturbance
+ * in the water* rather than as a circle laid over it. Two creatures whose
+ * ranges overlap brighten the same points twice, which is exactly the picture
+ * anybody would want of two animals watching the same patch of reef.
+ */
+function drawLattice(
+  ctx: CanvasRenderingContext2D,
+  layout: Layout,
+  reef: { readonly x: number; readonly y: number },
+  creatures: readonly DrawnCreature[],
+  sights: readonly number[],
+  now: number,
+): void {
+  const swell = 0.5 + 0.5 * Math.sin(now / 3400);
+  const dotBase = Math.max(0.7, layout.cell * 0.05);
+  for (let gy = LATTICE_STEP * 0.5; gy < reef.y; gy += LATTICE_STEP) {
+    for (let gx = LATTICE_STEP * 0.5; gx < reef.x; gx += LATTICE_STEP) {
+      let lift = 0;
+      let pushX = 0;
+      let pushY = 0;
+      for (let i = 0; i < creatures.length; i += 1) {
+        const creature = creatures[i]!;
+        const sight = sights[i]!;
+        const dx = gx - creature.x;
+        const dy = gy - creature.y;
+        const distance = Math.hypot(dx, dy);
+        if (distance >= sight || distance < 1e-6) {
+          continue;
+        }
+        // Strongest at the creature and gone at the rim, squared so the
+        // brightening reads as a pool rather than as a disc with an edge.
+        const near = 1 - distance / sight;
+        const weight = near * near;
+        lift += weight;
+        pushX += (dx / distance) * weight;
+        pushY += (dy / distance) * weight;
+      }
+      const alpha = 0.085 + swell * 0.025 + Math.min(0.62, lift * 0.55);
+      const at = toPixel(
+        layout,
+        gx + pushX * LATTICE_PUSH,
+        gy + pushY * LATTICE_PUSH,
+      );
+      const size = dotBase * (1 + Math.min(1.8, lift * 1.3));
+      ctx.fillStyle = `rgba(${LINE}, ${alpha})`;
+      ctx.fillRect(at.px - size, at.py - size, size * 2, size * 2);
+    }
+  }
+}
+
+// --- Kelp: a family of parallel lines, which is what a bed of weed is and
+// also what a line field is. Two readings of one drawing. ---
+
+const KELP = "96, 232, 208";
+
+function drawKelp(
+  ctx: CanvasRenderingContext2D,
+  layout: Layout,
+  kelp: readonly Bed[],
+  now: number,
+): void {
+  for (const bed of kelp) {
+    const centre = toPixel(layout, bed.x, bed.y);
+    const r = bed.radius * layout.cell;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(centre.px, centre.py, r, 0, Math.PI * 2);
+    ctx.clip();
+
+    // The blades: exactly spaced, each swaying on its own phase. Even spacing
+    // is what makes it read as a grown thing rather than as scattered marks;
+    // the phase offset is what stops it reading as a comb.
+    const spacing = Math.max(2.5, layout.cell * 0.3);
+    ctx.lineWidth = Math.max(0.8, layout.cell * 0.035);
+    ctx.lineCap = "round";
+    for (let x = centre.px - r; x <= centre.px + r; x += spacing) {
+      const seed = hash2(bed.x + x, bed.y);
+      const height = r * (0.75 + seed * 0.55);
+      const period = 5200 + seed * 4200;
+      const lean = Math.sin(now / period + seed * 8) * r * 0.2;
+      const rootY = centre.py + r;
+      ctx.strokeStyle = `rgba(${KELP}, ${0.13 + seed * 0.17})`;
+      ctx.beginPath();
+      ctx.moveTo(x, rootY);
+      ctx.quadraticCurveTo(x + lean * 0.4, rootY - height * 0.55, x + lean, rootY - height);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // The bed's own outline, dashed, so a visitor can see where cover ends
+    // without the fronds having to reach the rim.
+    ctx.save();
+    ctx.setLineDash([layout.cell * 0.3, layout.cell * 0.45]);
+    ctx.strokeStyle = `rgba(${KELP}, 0.22)`;
+    ctx.lineWidth = Math.max(0.8, layout.cell * 0.025);
+    ctx.beginPath();
+    ctx.arc(centre.px, centre.py, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// --- Food: concentric rings. Amount is radius, and nothing is a blob. ---
+
+const FOOD = "196, 240, 176";
+const CARCASS_COLOUR = "255, 150, 110";
+
+function drawFood(
+  ctx: CanvasRenderingContext2D,
+  layout: Layout,
+  food: readonly Morsel[],
+  carcasses: ReadonlyMap<number, number>,
+  now: number,
+): void {
+  ctx.lineWidth = Math.max(0.7, layout.cell * 0.028);
+  for (let index = 0; index < food.length; index += 1) {
+    const morsel = food[index];
+    if (!morsel || morsel.amount <= 0) {
+      continue;
+    }
+    const centre = toPixel(layout, morsel.x, morsel.y);
+    const fullness = Math.min(1, morsel.amount / 4);
+    const bornAt = carcasses.get(index);
+    const bloomAge = bornAt === undefined ? Infinity : now - bornAt;
+    const blooming = bloomAge >= 0 && bloomAge < CARCASS_BLOOM_MS;
+    const colour = blooming ? CARCASS_COLOUR : FOOD;
+    const r = morsel.radius * layout.cell * (0.3 + fullness * 0.4);
+    const breath = 1 + Math.sin(now / 2600 + index * 1.7) * 0.05;
+
+    // An asterisk, not a ring. Rings are what creatures are, and thirty
+    // concentric circles scattered over a reef of circular creatures is a
+    // picture nobody can read. Spokes have no silhouette to confuse with a
+    // body, and the count of them rising with the amount gives food a scale
+    // that is legible without a legend.
+    const spokes = 3 + Math.round(fullness * 3);
+    ctx.strokeStyle = `rgba(${colour}, ${0.11 + fullness * 0.22})`;
+    ctx.lineWidth = Math.max(0.7, layout.cell * 0.03);
+    for (let i = 0; i < spokes; i += 1) {
+      const a = (i / spokes) * Math.PI + index * 0.31 + now / 26000;
+      const arm = r * breath;
+      ctx.beginPath();
+      ctx.moveTo(centre.px - Math.cos(a) * arm, centre.py - Math.sin(a) * arm);
+      ctx.lineTo(centre.px + Math.cos(a) * arm, centre.py + Math.sin(a) * arm);
+      ctx.stroke();
+    }
+    ctx.fillStyle = `rgba(${colour}, ${0.35 + fullness * 0.4})`;
+    ctx.beginPath();
+    ctx.arc(centre.px, centre.py, Math.max(1, r * 0.11), 0, Math.PI * 2);
+    ctx.fill();
+
+    if (blooming) {
+      const t = bloomAge / CARCASS_BLOOM_MS;
+      ctx.strokeStyle = `rgba(${CARCASS_COLOUR}, ${(1 - t) * 0.55})`;
+      ctx.beginPath();
+      ctx.arc(centre.px, centre.py, r * (0.6 + t * 2.2), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+}
+
+// --- Trails: a path as a row of marks, not a smear. ---
+
+function drawTrails(
+  ctx: CanvasRenderingContext2D,
+  layout: Layout,
+  trails: ReadonlyMap<number, readonly TrailPoint[]>,
+  catalog: readonly CatalogEntry[],
+  creatures: readonly DrawnCreature[],
+  now: number,
+): void {
+  for (const creature of creatures) {
+    const path = trails.get(creature.id);
+    const entry = catalog[creature.species];
+    if (!path || !entry || path.length < 2) {
+      continue;
+    }
+    for (let i = 0; i < path.length; i += 1) {
+      const point = path[i]!;
+      const age = (now - point.t) / TRAIL_MS;
+      if (age < 0 || age > 1) {
+        continue;
+      }
+      const fade = 1 - age;
+      const at = toPixel(layout, point.x, point.y);
+      const size = Math.max(0.5, layout.cell * 0.05 * fade);
+      ctx.globalAlpha = fade * fade * 0.5;
+      ctx.fillStyle = entry.colour;
+      ctx.fillRect(at.px - size, at.py - size, size * 2, size * 2);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+// --- One creature: a geometric mark, oriented along `facing`. ---
+//
+// A drawn fish was tried and it was the wrong register: an illustration of an
+// animal sitting on top of a diagram of a world. A mark is honest about what
+// this is, it stays crisp at any size, and it tells four species apart by
+// *shape* before any colour is read — which is what the accessibility
+// criterion asks for anyway.
+
+type MarkKind = "chevron" | "circle" | "diamond" | "hex";
+
+const MARKS: Readonly<Record<string, MarkKind>> = {
+  wedge: "chevron",
+  round: "circle",
+  ring: "diamond",
+  spiral: "hex",
 };
 
-/** A cruise speed no catalog species swims faster than today
- * (`kelpHunter.cove`'s `cruise = 1.45`), used only to turn `speed` into a
- * fraction for the tail's amplitude and frequency — a creature at the edge
- * of what anything on this reef can do should thrash, not merely sway a
- * little harder than one ambling along at a third of it. */
-const CRUISE_REFERENCE = 1.45;
+const CRUISE_REFERENCE = 1.6;
 
-/// One caudal fin, filled.
-///
-/// It was a stroked curve, which drew a line, which made every creature that
-/// was not the hunter read as a lollipop: a disc with a pin behind it. A tail
-/// is a shape. Filling it is the whole difference between a token on a board
-/// and something swimming.
-function drawTailFin(
+function markPath(
   ctx: CanvasRenderingContext2D,
-  baseX: number,
-  baseY: number,
+  kind: MarkKind,
+  px: number,
+  py: number,
+  r: number,
   angle: number,
-  length: number,
-  sway: number,
-  finHalf: number,
-  forked: boolean,
 ): void {
-  const dx = Math.cos(angle);
-  const dy = Math.sin(angle);
-  const px = -dy;
-  const py = dx;
-  const tipX = baseX - dx * length + px * sway;
-  const tipY = baseY - dy * length + py * sway;
-  const midX = baseX - dx * length * 0.5 + px * sway * 0.45;
-  const midY = baseY - dy * length * 0.5 + py * sway * 0.45;
-  const upX = tipX + px * finHalf;
-  const upY = tipY + py * finHalf;
-  const downX = tipX - px * finHalf;
-  const downY = tipY - py * finHalf;
-  // A forked tail notches towards the body; a rounded one bulges away from
-  // it. That one difference is most of what tells a hunter from a grazer at a
-  // glance, before any colour is read.
-  const notchX = forked ? tipX + dx * finHalf * 0.8 : tipX - dx * finHalf * 0.35;
-  const notchY = forked ? tipY + dy * finHalf * 0.8 : tipY - dy * finHalf * 0.35;
-
   ctx.beginPath();
-  ctx.moveTo(baseX, baseY);
-  ctx.quadraticCurveTo(midX + px * finHalf * 0.2, midY + py * finHalf * 0.2, upX, upY);
-  ctx.quadraticCurveTo(notchX, notchY, downX, downY);
-  ctx.quadraticCurveTo(midX - px * finHalf * 0.2, midY - py * finHalf * 0.2, baseX, baseY);
-  ctx.closePath();
-  ctx.fill();
+  switch (kind) {
+    case "chevron": {
+      // A dart. The only mark with a point, for the only role that has one.
+      const back = angle + Math.PI;
+      ctx.moveTo(px + Math.cos(angle) * r * 1.45, py + Math.sin(angle) * r * 1.45);
+      ctx.lineTo(px + Math.cos(back - 0.42) * r * 1.1, py + Math.sin(back - 0.42) * r * 1.1);
+      ctx.lineTo(px + Math.cos(back) * r * 0.45, py + Math.sin(back) * r * 0.45);
+      ctx.lineTo(px + Math.cos(back + 0.42) * r * 1.1, py + Math.sin(back + 0.42) * r * 1.1);
+      ctx.closePath();
+      break;
+    }
+    case "circle":
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      break;
+    case "diamond":
+    case "hex": {
+      const sides = kind === "diamond" ? 4 : 6;
+      for (let i = 0; i < sides; i += 1) {
+        const a = angle + (i / sides) * Math.PI * 2;
+        const x = px + Math.cos(a) * r;
+        const y = py + Math.sin(a) * r;
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.closePath();
+      break;
+    }
+  }
 }
 
-/// One body, filled and tapered: a nose at the front and a waist at the tail.
-///
-/// An ellipse has no front. A creature drawn as one is a creature whose
-/// direction a visitor has to infer from its tail, and inferring is exactly
-/// what this whole rebuild is trying to stop them having to do.
-function drawBody(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  angle: number,
-  length: number,
-  width: number,
-  bend: number,
-): void {
-  const dx = Math.cos(angle);
-  const dy = Math.sin(angle);
-  const px = -dy;
-  const py = dx;
-  const noseX = cx + dx * length * 0.5;
-  const noseY = cy + dy * length * 0.5;
-  const waistX = cx - dx * length * 0.5 + px * bend;
-  const waistY = cy - dy * length * 0.5 + py * bend;
-  // The widest point sits forward of centre, which is where it sits on a
-  // fish and why a fish looks like it is going somewhere.
-  const shoulderX = cx + dx * length * 0.12;
-  const shoulderY = cy + dy * length * 0.12;
-  const half = width * 0.5;
-
-  ctx.beginPath();
-  ctx.moveTo(noseX, noseY);
-  ctx.quadraticCurveTo(shoulderX + px * half, shoulderY + py * half, waistX, waistY);
-  ctx.quadraticCurveTo(shoulderX - px * half, shoulderY - py * half, noseX, noseY);
-  ctx.closePath();
-  ctx.fill();
-}
-
-function drawCreatureBody(
+function drawCreatureMark(
   ctx: CanvasRenderingContext2D,
   layout: Layout,
   entry: CatalogEntry,
@@ -772,133 +552,185 @@ function drawCreatureBody(
 ): void {
   const centre = toPixel(layout, creature.x, creature.y);
   const angle = Math.atan2(creature.facingY, creature.facingX);
-  const silhouette = SILHOUETTES[entry.shape] ?? SILHOUETTES["round"]!;
-  // The subject of the picture, and sized to say so. It was 0.42 + size*0.09,
-  // which on this reef drew a grazer nine pixels across against a mouthful of
-  // food thirty-two -- so the food read as the animals and the animals read as
-  // punctuation. A reef is a picture of its creatures.
-  const baseRadius = (0.8 + entry.size * 0.14) * layout.cell;
-  const bodyLength = baseRadius * 2 * silhouette.lengthMul;
-  const bodyWidth = baseRadius * 2 * silhouette.widthMul;
-  const tailLength = baseRadius * 2 * silhouette.tailMul;
-
+  const kind = MARKS[entry.shape] ?? "circle";
+  const r = (0.7 + entry.size * 0.13) * layout.cell;
   const speedFrac = Math.min(1, Math.max(0, creature.speed / CRUISE_REFERENCE));
-  const freqPerMs = (0.55 + speedFrac * 2.1) / 1000;
-  // A tail thrashes; it does not detach. The first pass swung a full body's
-  // width and the fin read as a second creature keeping station behind the
-  // first.
-  const amplitude = bodyWidth * (0.1 + speedFrac * 0.5);
-  const phase = (creature.id * 2.399963) % (Math.PI * 2);
-  const sway = Math.sin(now * freqPerMs * Math.PI * 2 + phase) * amplitude;
 
   ctx.save();
   ctx.globalAlpha = alphaMul;
+  ctx.lineJoin = "round";
 
-  // The glow: a soft radial halo in the creature's own colour, which is
-  // where "luminous" comes from and what makes it read against dark water.
-  for (const [mul, glowAlpha] of [
-    [2.4, 0.05],
-    [1.7, 0.09],
-  ] as const) {
-    ctx.globalAlpha = alphaMul * glowAlpha;
-    ctx.fillStyle = entry.colour;
-    ctx.beginPath();
-    ctx.arc(centre.px, centre.py, baseRadius * mul, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  // A halo, but a ring rather than a smear: the one soft thing on the reef
+  // would be the one thing that looked out of place.
+  ctx.globalAlpha = alphaMul * (0.1 + speedFrac * 0.16);
+  ctx.strokeStyle = entry.colour;
+  ctx.lineWidth = Math.max(1, layout.cell * 0.12);
+  markPath(ctx, kind, centre.px, centre.py, r * 1.5, angle);
+  ctx.stroke();
 
-  // The tail, behind the body so its base disappears under it.
-  const tailBase = {
-    x: centre.px - Math.cos(angle) * bodyLength * 0.34,
-    y: centre.py - Math.sin(angle) * bodyLength * 0.34,
-  };
-  ctx.globalAlpha = alphaMul * 0.9;
+  // The mark itself: filled faintly so it has body, outlined brightly so it
+  // has an edge. Contrast of edge against near-black is what the first pass
+  // had none of.
+  ctx.globalAlpha = alphaMul * 0.26;
   ctx.fillStyle = entry.colour;
-  drawTailFin(
-    ctx,
-    tailBase.x,
-    tailBase.y,
-    angle,
-    tailLength * 0.8,
-    sway,
-    bodyWidth * 0.42,
-    silhouette.forked,
-  );
-
-  // The body itself, tapered and bending a little with the tail.
-  ctx.globalAlpha = alphaMul;
-  ctx.fillStyle = entry.colour;
-  drawBody(
-    ctx,
-    centre.px,
-    centre.py,
-    angle,
-    bodyLength,
-    bodyWidth,
-    sway * 0.22,
-  );
-
-  // An eye. Two pixels of dark near the nose, and the difference between a
-  // shape moving and an animal looking where it is going.
-  const eyeX = centre.px + Math.cos(angle) * bodyLength * 0.28 - Math.sin(angle) * bodyWidth * 0.16;
-  const eyeY = centre.py + Math.sin(angle) * bodyLength * 0.28 + Math.cos(angle) * bodyWidth * 0.16;
-  ctx.globalAlpha = alphaMul * 0.75;
-  ctx.fillStyle = "rgba(6, 18, 24, 1)";
-  ctx.beginPath();
-  ctx.arc(eyeX, eyeY, Math.max(0.8, baseRadius * 0.13), 0, Math.PI * 2);
+  markPath(ctx, kind, centre.px, centre.py, r, angle);
   ctx.fill();
 
-  if (silhouette.shell) {
-    // The hermit crab's shell: an arc over the body rather than a second
-    // filled shape, so it reads as riding on the crab and not as a second
-    // creature.
-    ctx.globalAlpha = alphaMul * 0.9;
-    ctx.strokeStyle = "rgba(40, 28, 8, 0.55)";
-    ctx.lineWidth = Math.max(1, baseRadius * 0.22);
+  ctx.globalAlpha = alphaMul;
+  ctx.strokeStyle = entry.colour;
+  ctx.lineWidth = Math.max(1, layout.cell * 0.055);
+  markPath(ctx, kind, centre.px, centre.py, r, angle);
+  ctx.stroke();
+
+  // Where it is going, as a line out of the front. Length follows speed, so
+  // a creature at rest has none and a fleeing one is visibly urgent.
+  if (speedFrac > 0.02) {
+    const reach = r * (0.6 + speedFrac * 2.4);
+    ctx.globalAlpha = alphaMul * (0.25 + speedFrac * 0.5);
+    ctx.lineWidth = Math.max(0.8, layout.cell * 0.03);
     ctx.beginPath();
-    ctx.ellipse(
-      centre.px,
-      centre.py,
-      bodyLength * 0.38,
-      bodyWidth * 0.42,
-      angle,
-      Math.PI * 1.15,
-      Math.PI * 1.85,
-    );
+    ctx.moveTo(px(centre.px, angle, r * 1.1), py(centre.py, angle, r * 1.1));
+    ctx.lineTo(px(centre.px, angle, r * 1.1 + reach), py(centre.py, angle, r * 1.1 + reach));
+    ctx.stroke();
+  }
+
+  // The core. One bright dot, so a creature has a definite position even at
+  // the far end of a zoomed-out reef.
+  ctx.globalAlpha = alphaMul;
+  ctx.fillStyle = entry.colour;
+  ctx.beginPath();
+  ctx.arc(centre.px, centre.py, Math.max(1, r * 0.2), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function px(from: number, angle: number, distance: number): number {
+  return from + Math.cos(angle) * distance;
+}
+
+function py(from: number, angle: number, distance: number): number {
+  return from + Math.sin(angle) * distance;
+}
+
+// --- The two load-bearing overlays. ---
+
+/// The sight radius, as a dashed ring with ticks at the quarters.
+///
+/// The lattice already shows the perception as a field; this is the edge of
+/// it, said precisely, for the creature somebody has actually asked about.
+function drawSightRing(
+  ctx: CanvasRenderingContext2D,
+  layout: Layout,
+  cx: number,
+  cy: number,
+  sightUnits: number,
+  selected: boolean,
+): void {
+  if (!selected) {
+    return;
+  }
+  const r = sightUnits * layout.cell;
+  ctx.save();
+  ctx.strokeStyle = `rgba(${LINE}, 0.32)`;
+  ctx.lineWidth = Math.max(0.8, layout.cell * 0.022);
+  ctx.setLineDash([layout.cell * 0.22, layout.cell * 0.5]);
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = `rgba(${LINE}, 0.5)`;
+  for (let i = 0; i < 4; i += 1) {
+    const a = (i / 4) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * r * 0.965, cy + Math.sin(a) * r * 0.965);
+    ctx.lineTo(cx + Math.cos(a) * r * 1.035, cy + Math.sin(a) * r * 1.035);
     ctx.stroke();
   }
   ctx.restore();
 }
 
+const REASON_LINE_COLOUR: Readonly<Record<string, string>> = {
+  fleeing_threat: "255, 128, 96",
+  hunting: "255, 90, 72",
+  sheltering: KELP,
+  seeking_food: FOOD,
+  crowded: "180, 160, 255",
+};
+
+/// A line to what a creature is reacting to, with a mark on the far end.
+///
+/// The mark matters as much as the line: a line alone reads as a connection
+/// between equals, and this is a creature attending to a thing.
+function drawReactionLine(
+  ctx: CanvasRenderingContext2D,
+  layout: Layout,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+  reason: string,
+  selected: boolean,
+): void {
+  const colour = REASON_LINE_COLOUR[reason];
+  if (!colour) {
+    return;
+  }
+  const a = toPixel(layout, fromX, fromY);
+  const b = toPixel(layout, toX, toY);
+  ctx.save();
+  ctx.strokeStyle = `rgba(${colour}, ${selected ? 0.6 : 0.24})`;
+  ctx.lineWidth = Math.max(0.7, layout.cell * (selected ? 0.03 : 0.02));
+  ctx.setLineDash([layout.cell * 0.16, layout.cell * 0.22]);
+  ctx.beginPath();
+  ctx.moveTo(a.px, a.py);
+  ctx.lineTo(b.px, b.py);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  const tick = Math.max(2, layout.cell * 0.12);
+  ctx.strokeStyle = `rgba(${colour}, ${selected ? 0.85 : 0.4})`;
+  ctx.strokeRect(b.px - tick / 2, b.py - tick / 2, tick, tick);
+  ctx.restore();
+}
+
+// --- Selection, flashes, and what is left where something died. ---
+
 function drawSelectionRing(
   ctx: CanvasRenderingContext2D,
   layout: Layout,
-  px: number,
-  py: number,
+  cx: number,
+  cy: number,
   radius: number,
   debugText: string | null,
 ): void {
+  const r = radius * 2.1;
   ctx.save();
-  ctx.strokeStyle = "#ffe27a";
-  ctx.lineWidth = Math.max(1.5, layout.cell * 0.07);
-  ctx.beginPath();
-  ctx.arc(px, py, radius + layout.cell * 0.22, 0, Math.PI * 2);
-  ctx.stroke();
-  if (debugText) {
-    ctx.font = `${Math.max(9, Math.round(layout.cell * 0.3))}px monospace`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "bottom";
-    ctx.fillStyle = "#ffe27a";
-    ctx.fillText(debugText, px, py - radius - layout.cell * 0.28);
+  ctx.strokeStyle = "rgba(236, 252, 255, 0.9)";
+  ctx.lineWidth = Math.max(1, layout.cell * 0.03);
+  // Four corner brackets rather than a closed ring: a ring around a circular
+  // mark is two circles, and brackets say "this one" without competing with
+  // the shape they are pointing at.
+  for (let i = 0; i < 4; i += 1) {
+    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, a - 0.28, a + 0.28);
+    ctx.stroke();
   }
   ctx.restore();
+  if (debugText) {
+    ctx.save();
+    ctx.fillStyle = "rgba(236, 252, 255, 0.8)";
+    ctx.font = `${Math.max(9, Math.round(layout.cell * 0.42))}px ui-monospace, monospace`;
+    ctx.textAlign = "center";
+    ctx.fillText(debugText, cx, cy - r - layout.cell * 0.3);
+    ctx.restore();
+  }
 }
 
 function drawFlash(
   ctx: CanvasRenderingContext2D,
   layout: Layout,
-  px: number,
-  py: number,
+  cx: number,
+  cy: number,
   radius: number,
   flash: Flash,
   now: number,
@@ -908,12 +740,17 @@ function drawFlash(
     return;
   }
   const t = age / FLASH_MS;
+  const colour =
+    flash.kind === "hunted"
+      ? "255, 96, 76"
+      : flash.kind === "ate"
+        ? FOOD
+        : "236, 252, 255";
   ctx.save();
-  ctx.globalAlpha = 1 - t;
-  ctx.strokeStyle = flash.kind === "hunted" ? "#ff5a4d" : "#fff2b0";
-  ctx.lineWidth = Math.max(1, layout.cell * 0.06);
+  ctx.strokeStyle = `rgba(${colour}, ${(1 - t) * 0.85})`;
+  ctx.lineWidth = Math.max(1, layout.cell * 0.05 * (1 - t));
   ctx.beginPath();
-  ctx.arc(px, py, radius + layout.cell * 0.18 * t + radius * 0.3, 0, Math.PI * 2);
+  ctx.arc(cx, cy, radius * (1.2 + t * 3.2), 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
 }
@@ -929,22 +766,32 @@ function drawDeparted(
     if (age < 0 || age > DEPARTED_MS) {
       continue;
     }
-    const life = 1 - age / DEPARTED_MS;
-    const { px, py } = toPixel(layout, gone.x, gone.y);
-    const r = layout.cell * (0.5 + (1 - life) * 1.1);
+    const t = age / DEPARTED_MS;
+    const at = toPixel(layout, gone.x, gone.y);
+    const r = layout.cell * (0.9 + t * 1.6);
     ctx.save();
-    ctx.globalAlpha = life * 0.7;
-    ctx.strokeStyle = "#1a1410";
-    ctx.lineWidth = Math.max(1, layout.cell * 0.08);
-    ctx.beginPath();
-    ctx.arc(px, py, r, 0, Math.PI * 2);
-    ctx.stroke();
+    ctx.globalAlpha = 1 - t;
+    ctx.strokeStyle = "rgba(255, 132, 108, 0.85)";
+    ctx.lineWidth = Math.max(1, layout.cell * 0.035);
+    // A cross, collapsing. Nothing else on the reef is a straight X, so it is
+    // never read as a creature.
+    for (const a of [Math.PI / 4, -Math.PI / 4]) {
+      ctx.beginPath();
+      ctx.moveTo(at.px - Math.cos(a) * r, at.py - Math.sin(a) * r);
+      ctx.lineTo(at.px + Math.cos(a) * r, at.py + Math.sin(a) * r);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 }
 
-/** Draws one whole frame. `now` is `performance.now()`, for every animated
- * or flashing thing here. */
+/**
+ * One frame.
+ *
+ * Order matters and it is the order of a picture rather than of a scene
+ * graph: the glass, then the field, then the things standing in it, then the
+ * two overlays that say what any of it means, then the glass again.
+ */
 export function render(
   ctx: CanvasRenderingContext2D,
   cssWidth: number,
@@ -961,26 +808,38 @@ export function render(
 ): void {
   ctx.clearRect(0, 0, cssWidth, cssHeight);
   const screen = ensureScreenCache(ctx, cssWidth, cssHeight);
-
-  drawWater(ctx, cssWidth, cssHeight, screen);
-  drawLightBands(ctx, cssWidth, cssHeight, now, screen);
-  drawKelpBack(ctx, layout, snapshot.kelp, now);
-  drawFood(ctx, layout, snapshot.food, carcasses, now);
-  drawTrails(ctx, layout, trails, snapshot.catalog, creatures, now);
-  drawDeparted(ctx, layout, departed, now);
-
   const focus =
     selection.focus && selection.focus.id === selection.id
       ? selection.focus
       : null;
 
-  for (const creature of creatures) {
-    const selected = creature.id === selection.id;
+  // Every creature's sight radius, once, because the lattice needs all of
+  // them and so do the rings.
+  const sights = creatures.map((creature) =>
+    creature.id === selection.id && focus
+      ? focus.observation.sight
+      : approxSight(snapshot.catalog[creature.species]?.role),
+  );
+
+  drawGround(ctx, cssWidth, cssHeight, screen);
+  drawHatch(ctx, cssWidth, cssHeight, now);
+  drawLattice(ctx, layout, snapshot.reef, creatures, sights, now);
+  drawKelp(ctx, layout, snapshot.kelp, now);
+  drawFood(ctx, layout, snapshot.food, carcasses, now);
+  drawTrails(ctx, layout, trails, snapshot.catalog, creatures, now);
+  drawDeparted(ctx, layout, departed, now);
+
+  for (let i = 0; i < creatures.length; i += 1) {
+    const creature = creatures[i]!;
     const centre = toPixel(layout, creature.x, creature.y);
-    const sight = selected && focus ? focus.observation.sight : approxSight(
-      snapshot.catalog[creature.species]?.role,
+    drawSightRing(
+      ctx,
+      layout,
+      centre.px,
+      centre.py,
+      sights[i]!,
+      creature.id === selection.id,
     );
-    drawSightCircle(ctx, layout, centre.px, centre.py, sight, selected);
   }
 
   for (const creature of creatures) {
@@ -1010,17 +869,20 @@ export function render(
     }
     const selected = creature.id === selection.id;
     const dimmed = selection.id !== null && !selected;
-    const alphaMul = (creature.hidden ? 0.4 : 1) * (dimmed ? 0.35 : 1);
-    drawCreatureBody(ctx, layout, entry, creature, now, alphaMul);
+    const alphaMul = (creature.hidden ? 0.42 : 1) * (dimmed ? 0.55 : 1);
+    drawCreatureMark(ctx, layout, entry, creature, now, alphaMul);
 
     const centre = toPixel(layout, creature.x, creature.y);
-    const radius = (0.8 + entry.size * 0.14) * layout.cell;
+    const radius = (0.7 + entry.size * 0.13) * layout.cell;
     if (selected) {
-      const debugText =
-        selection.debug && focus
-          ? `${focus.instructions}i ${focus.fuel}f`
-          : null;
-      drawSelectionRing(ctx, layout, centre.px, centre.py, radius, debugText);
+      drawSelectionRing(
+        ctx,
+        layout,
+        centre.px,
+        centre.py,
+        radius,
+        selection.debug && focus ? `${focus.instructions}i ${focus.fuel}f` : null,
+      );
     }
     const flash = flashes.get(creature.id);
     if (flash) {
@@ -1028,22 +890,5 @@ export function render(
     }
   }
 
-  // Kelp fronds that pass in front of a hidden creature, so it reads as
-  // standing *in* the weed rather than merely marked as hidden.
-  for (const creature of creatures) {
-    if (!creature.hidden) {
-      continue;
-    }
-    const bed = snapshot.kelp.find(
-      (candidate) =>
-        Math.hypot(candidate.x - creature.x, candidate.y - creature.y) <=
-        candidate.radius,
-    );
-    if (bed) {
-      drawKelpFrondsOver(ctx, layout, bed, creature.x, now);
-    }
-  }
-
-  drawMotes(ctx, cssWidth, cssHeight, now);
   drawVignette(ctx, cssWidth, cssHeight, screen);
 }
