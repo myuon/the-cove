@@ -465,22 +465,26 @@ fn snapshot(tank: &Tank) -> String {
 fn focus(tank: &Tank, ask: &Ask) -> String {
     let mut out = String::with_capacity(1024);
     let creature = tank.world.creatures.iter().find(|c| c.id == ask.id);
-    let result = tank
-        .last
-        .iter()
-        .find(|o| o.id == ask.id)
-        .map(|o| o.result.name())
-        .unwrap_or_default();
+    let outcome = tank.last.iter().find(|o| o.id == ask.id);
+    let result = outcome.map(|o| o.result.name()).unwrap_or_default();
+    // The sentence the world wrote when it declined an intent. It is the
+    // whole of the "invalid decision" case a visitor can be shown, and
+    // without it a refusal is a word with no reason attached to it.
+    let refusal = outcome.and_then(|o| o.result.refusal());
     let species = creature.map(|c| c.species).unwrap_or(0);
     out.push_str(&format!(
         "{{\"id\":{},\"species\":{},\"tick\":{},",
         ask.id, species, ask.asked.observation.tick
     ));
     out.push_str(&format!(
-        "\"intent\":{},\"reason\":{},\"result\":{},",
+        "\"intent\":{},\"reason\":{},\"result\":{},\"refusal\":{},",
         quote(&ask.decision.intent.name()),
         quote(ask.decision.reason.name()),
-        quote(&result)
+        quote(&result),
+        match &refusal {
+            Some(why) => quote(why),
+            None => "null".to_string(),
+        }
     ));
     out.push_str(&format!(
         "\"instructions\":{},\"fuel\":{},",
@@ -521,6 +525,18 @@ fn focus(tank: &Tank, ask: &Ask) -> String {
         )),
     }
     out.push(',');
+
+    let knew = &ask.asked.view;
+    out.push_str(&format!(
+        "\"self\":{{\"energy\":{},\"age\":{},\"hidden\":{},\"role\":{},\"memory\":{}}},",
+        knew.energy,
+        knew.age,
+        knew.hidden,
+        quote(&format!("{:?}", knew.role).to_lowercase()),
+        // The only thing a creature carries from one tick to the next, and so
+        // the whole of what one in this world remembers.
+        quote(&knew.last.name())
+    ));
 
     let seen = &ask.asked.observation;
     out.push_str(&format!(

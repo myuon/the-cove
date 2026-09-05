@@ -218,6 +218,10 @@ pub struct Ask {
 /// by trimming.
 #[derive(Clone, Debug)]
 pub struct Asked {
+    /// What the creature was told about itself, including `last` — the only
+    /// thing it carries from one tick to the next, and therefore the whole of
+    /// what a creature in this world remembers.
+    pub view: creature_host::SelfView,
     /// The bounded, immutable world this creature was shown. The whole of
     /// what it could have reasoned from, so the whole of what an explanation
     /// may honestly appeal to.
@@ -247,6 +251,16 @@ impl Ask {
             id,
             decision,
             asked: Asked {
+                view: creature_host::SelfView {
+                    id,
+                    species: 0,
+                    role: creature_host::Role::Grazer,
+                    at: Cell { x: 0, y: 0 },
+                    energy: 0,
+                    age: 0,
+                    hidden: false,
+                    last: ActionResult::Spawned,
+                },
                 observation: Observation {
                     tick: 0,
                     here: 0,
@@ -506,6 +520,7 @@ pub fn decisions(
             id: creature.id,
             decision,
             asked: Asked {
+                view,
                 observation,
                 instructions: outcome.instructions,
                 fuel: outcome.fuel,

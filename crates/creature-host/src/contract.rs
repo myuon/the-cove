@@ -160,6 +160,18 @@ impl ActionResult {
         }
     }
 
+    /// Why the world refused this intent, for a result that is a refusal.
+    ///
+    /// The mirror of `ActionResult.refusal`. It is the whole of what a visitor
+    /// can be told about an intent the world declined: a refusal without its
+    /// sentence is a word with no reason attached to it.
+    pub fn refusal(&self) -> Option<&str> {
+        match self {
+            ActionResult::Refused(why) => Some(why.as_str()),
+            _ => None,
+        }
+    }
+
     /// The word this result is written with, matching `ActionResult.name`.
     pub fn name(&self) -> String {
         match self {
