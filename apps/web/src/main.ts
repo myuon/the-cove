@@ -41,15 +41,20 @@ const WIDTH = 16;
 const HEIGHT = 12;
 const DEFAULT_SEED = 7;
 
-// Six ticks a (real) second. Fast enough that the tank reads as alive rather
-// than as a slideshow, slow enough that a visible decision — a grazer
-// stepping into cover, a hunter closing the last cell — is still on screen
-// two or three frames after it happens rather than a blur one frame wide.
-// The instinct modules only ever look one or two cells out
-// (`catalog/instinct/instinct.cove`'s sight ranges), so a chase is a handful
-// of these steps, not dozens: six a second is paced to that, not to 60 FPS
-// rendering, which stays separate on purpose (see `loop.ts`).
-const TICK_MS = 1000 / 6;
+// Three ticks a (real) second. Fast enough that the tank reads as alive
+// rather than as a slideshow, slow enough that a visible decision — a grazer
+// stepping into cover, a hunter closing the last cell — is still on screen for
+// a beat rather than a blur one frame wide. A chase here is a handful of
+// steps and not dozens, because a creature only ever sees one or two cells
+// out, so this is paced to the world and not to the 60 FPS render loop, which
+// stays separate on purpose (see `loop.ts`).
+//
+// It was six, and six was too quick to watch: the first person to open the
+// deployed page said so, and the honest fix is to move the base rate rather
+// than to ship with the `0.5x` button pre-pressed. A default that reads as
+// "slowed down" is a default apologising for itself, and it leaves nowhere to
+// go for somebody who wants it slower still.
+const TICK_MS = 1000 / 3;
 
 // How following eases: the real milliseconds in which half the remaining
 // distance to the followed creature closes. Not tied to `TICK_MS` or
@@ -190,6 +195,13 @@ async function main(): Promise<void> {
 
   function applyFreshSnapshot(fresh: Snapshot, isFirst: boolean): void {
     const now = performance.now();
+    // The reef's own shape, handed to CSS. On a phone the tank is a row in a
+    // column and has to be given a height, and a height chosen by hand
+    // letterboxes whatever the reef does not happen to be — so the shape comes
+    // from the snapshot, which is the only thing that knows it, rather than
+    // from a `4 / 3` written into a stylesheet that nothing would update when
+    // the world changed size.
+    canvas.style.setProperty("--world-aspect", `${fresh.width} / ${fresh.height}`);
     if (!isFirst && currSnapshot) {
       const departedNow: Departed[] = departedCreatures(currSnapshot, fresh);
       for (const gone of departedNow) {
