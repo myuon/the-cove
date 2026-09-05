@@ -1,0 +1,60 @@
+# What has to be true before anything is deployed.
+#
+# Two jobs and they are not the same question. `rust` is the simulation held
+# to itself; `web` is the browser build held to the simulation — sixty state
+# hashes computed in WebAssembly against the ones a native binary wrote, which
+# is the claim a shared replay link stands on and which neither side can make
+# alone.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # `--profile checked` is release with the debug assertions and the
+      # overflow checks turned back on. It is not a nicety here: this suite
+      # runs Cove programs rather than merely compiling a harness, and an
+      # unoptimised build of the VM is several times slower at it.
+      - run: cargo test --workspace --profile checked
+      - run: cargo doc --workspace --no-deps
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: cargo build -p tank-wasm --profile checked --target wasm32-unknown-unknown
+      - run: npm ci
+        working-directory: apps/web
+      - run: npm run build
+        working-directory: apps/web
+      - run: npm test
+        working-directory: apps/web
+      # The gate that matters: the module runs, and its hashes are the native
+      # simulation's.
+      - run: node apps/web/check.mjs

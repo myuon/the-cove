@@ -1,0 +1,73 @@
+# The site.
+#
+# Everything is static: the simulation, the Cove runtime and the catalog are
+# one WebAssembly module, the page is compiled TypeScript, and there is no
+# account, database or server anywhere in it.
+#
+# The deployed module is built with `--release` and the tests run under
+# `checked`. That is two profiles of the same simulation, so the check below
+# runs against the one being shipped: the hashes must be the same either way,
+# and this is where that is established rather than assumed.
+name: pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - run: cargo build -p tank-wasm --release --target wasm32-unknown-unknown
+      - run: npm ci
+        working-directory: apps/web
+      - run: npm run build
+        working-directory: apps/web
+
+      - name: the shipped module answers what the native simulation answers
+        run: node apps/web/check.mjs
+        env:
+          TANK_PROFILE: release
+
+      - name: assemble the site
+        run: |
+          mkdir -p site/dist
+          cp apps/web/index.html site/
+          cp apps/web/dist/*.js site/dist/
+          cp target/wasm32-unknown-unknown/release/tank_wasm.wasm site/dist/
+          ls -la site site/dist
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

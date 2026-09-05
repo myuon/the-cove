@@ -15,7 +15,14 @@ import { dirname, join } from 'node:path'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = join(here, '..', '..')
-const wasm = join(root, 'target', 'wasm32-unknown-unknown', 'checked', 'tank_wasm.wasm')
+// The profile to check, because the site ships one and the tests run another.
+// `checked` is release with the debug assertions and the overflow checks back
+// on and is what `cargo t` uses; `release` is what is deployed. The hashes
+// must be the same either way -- the arithmetic is integer and stays in range
+// by design -- and this is where that is actually established rather than
+// assumed.
+const profile = process.env.TANK_PROFILE ?? 'checked'
+const wasm = join(root, 'target', 'wasm32-unknown-unknown', profile, 'tank_wasm.wasm')
 const golden = join(root, 'fixtures', 'browser-hashes.txt')
 
 // `performance.now()` rather than `Date.now()`: the tank times itself through
@@ -96,7 +103,7 @@ if (seen.fuel !== seen.instructions) {
   fail(`fuel ${seen.fuel} and instructions ${seen.instructions} disagree`)
 }
 
-console.log(`ok: ${seen.creatures.length} creatures, 60 ticks, hash ${seen.hash}`)
+console.log(`ok [${profile}]: ${seen.creatures.length} creatures, 60 ticks, hash ${seen.hash}`)
 console.log(`   ${seen.catalog.map((s) => `${s.name} (${s.role})`).join(', ')}`)
 console.log(`   ${expected.length} hashes agree with the native simulation`)
 console.log(
