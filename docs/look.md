@@ -37,17 +37,47 @@ to draw the field rather than to illustrate the animals standing in it. What
 that buys is that the most beautiful thing on the screen and the most
 informative thing on the screen are the same thing.
 
-## The lattice, which is the picture and also the product
+## The field, which is the picture and also the product
 
-A regular grid of points, every 2 reef units, drawn dim. Wherever a creature
-can see, the points **brighten and are pushed outward**, falling off to nothing
-at the rim of its sight.
+A triangular lattice of short strokes. Quiet water is a faint, even weave
+whose angle varies smoothly across the reef on a couple of sines and drifts
+over half a minute — a slow current with eddies in it, never a ruling.
 
-That is a sight radius rendered as something rather than annotated: the water
-visibly bends around what is being perceived, two creatures watching the same
-patch brighten it twice, and a visitor learns what "it cannot see that far"
-means without being told. Delete everything else in the renderer and the reef
-would still say what it is about.
+Wherever a creature can see, the strokes swing to lie **around** it —
+perpendicular to the direction away, so they close into a whorl rather than
+bursting out of one — and brighten, lengthen, and take **that creature's own
+colour**. Two creatures watching the same water make a two-coloured
+interference where their whorls meet.
+
+That is a sight radius rendered as something rather than annotated. A circle
+is a boundary somebody has to be told the meaning of; this is the water
+visibly behaving differently inside one. Delete everything else in the
+renderer and the reef would still say what it is about.
+
+A triangular lattice and not a square one: a square grid of dots reads as
+graph paper, because the eye finds the rows and columns immediately and then
+stops looking.
+
+### What it costs, and what cannot be measured from here
+
+The field is the most expensive thing drawn — around nine hundred segments
+over the whole canvas — so it is painted to its own canvas at twenty hertz and
+blitted, because the weave drifts over tens of seconds and the whorls follow
+creatures that move three times a second. Nothing in it changes at sixty.
+
+Strokes are batched by a quantised colour and alpha rather than issued one per
+point: six alpha levels is more than an eye resolves in a stroke this thin, and
+it took the draw calls from six hundred and thirty a frame to a hundred and
+sixty-eight.
+
+**None of that was validated by a frame-rate measurement, and it could not
+be.** Every number taken while building this came from a headless browser
+whose `requestAnimationFrame` runs at about nine hertz on a *blank page* — so
+the measurements were of the harness and not of the drawing, which is exactly
+why one of them got worse when the draw calls got four times cheaper. The
+optimisations above stand on being obviously less work rather than on
+evidence, and the sixty-frame claim in the acceptance criteria is still
+untested.
 
 ## The water
 

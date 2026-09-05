@@ -244,7 +244,7 @@ function drawHatch(
   height: number,
   now: number,
 ): void {
-  const spacing = 26;
+  const spacing = 38;
   const diag = Math.hypot(width, height);
   ctx.save();
   ctx.beginPath();
@@ -254,13 +254,20 @@ function drawHatch(
   ctx.rotate(-0.52);
   ctx.lineWidth = 1;
   const drift = ((now / 90) % spacing) - spacing;
+  const LEVELS = 4;
+  const lanes: number[][] = [[], [], [], []];
   for (let x = -diag + drift; x < diag; x += spacing) {
-    // A slow swell across the family, so the light is never a static ruling.
     const swell = 0.5 + 0.5 * Math.sin(x * 0.004 + now / 5200);
+    lanes[Math.min(LEVELS - 1, Math.floor(swell * LEVELS))]!.push(x);
+  }
+  for (let level = 0; level < LEVELS; level += 1) {
+    const swell = (level + 0.5) / LEVELS;
     ctx.strokeStyle = `rgba(${LINE}, ${0.008 + swell * 0.022})`;
     ctx.beginPath();
-    ctx.moveTo(x, -diag);
-    ctx.lineTo(x, diag);
+    for (const x of lanes[level]!) {
+      ctx.moveTo(x, -diag);
+      ctx.lineTo(x, diag);
+    }
     ctx.stroke();
   }
   ctx.restore();
@@ -279,62 +286,238 @@ function drawVignette(
 // --- The lattice: the reef's own field, and what perception looks like. ---
 
 /// How far apart the lattice points sit, in reef units.
-const LATTICE_STEP = 2.0;
-/// How far a point is pushed away from a creature that can see it, at most.
-const LATTICE_PUSH = 0.7;
+const LATTICE_STEP = 2.05;
 
-/**
- * The field, brightened and displaced wherever something is looking.
- *
- * Every point is dim on its own. A creature within its own sight radius
- * lifts the points around it and pushes them outward, falling off to nothing
- * at the edge of what it can see, so a sight range is drawn as a *disturbance
- * in the water* rather than as a circle laid over it. Two creatures whose
- * ranges overlap brighten the same points twice, which is exactly the picture
- * anybody would want of two animals watching the same patch of reef.
- */
-function drawLattice(
+/** A hex colour as `r, g, b`, cached, because the catalog hands out `#rrggbb`
+ * and the field mixes colours by the hundred every frame. */
+const rgbCache = new Map<string, [number, number, number]>();
+
+function rgbOf(hex: string): [number, number, number] {
+  const found = rgbCache.get(hex);
+  if (found) {
+    return found;
+  }
+  const n = parseInt(hex.replace("#", ""), 16);
+  const rgb: [number, number, number] = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  rgbCache.set(hex, rgb);
+  return rgb;
+}
+
+/// The field, painted to its own canvas and reused.
+///
+/// It is redrawn on its own clock rather than every frame. The weave drifts
+/// over tens of seconds and the whorls follow creatures that move three times
+/// a second, so twenty repaints a second is already more than anything in it
+/// changes at — and a repaint is nine hundred segments over the whole canvas,
+/// which is the most expensive thing the renderer does by a wide margin.
+///
+/// The cached image is thrown away when the camera moves, because the field
+/// is drawn in reef space and a pan is a different picture.
+interface FieldCache {
+  readonly canvas: HTMLCanvasElement;
+  width: number;
+  height: number;
+  cell: number;
+  offsetX: number;
+  offsetY: number;
+  paintedAt: number;
+}
+
+let fieldCache: FieldCache | null = null;
+
+/** How long a painted field may be reused. */
+const FIELD_REPAINT_MS = 55;
+
+function drawField(
   ctx: CanvasRenderingContext2D,
   layout: Layout,
   reef: { readonly x: number; readonly y: number },
   creatures: readonly DrawnCreature[],
+  catalog: readonly CatalogEntry[],
+  sights: readonly number[],
+  now: number,
+  width: number,
+  height: number,
+): void {
+  if (
+    !fieldCache ||
+    fieldCache.width !== width ||
+    fieldCache.height !== height
+  ) {
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(width));
+    canvas.height = Math.max(1, Math.round(height));
+    fieldCache = {
+      canvas,
+      width,
+      height,
+      cell: NaN,
+      offsetX: NaN,
+      offsetY: NaN,
+      paintedAt: -Infinity,
+    };
+  }
+  const cache = fieldCache;
+  const moved =
+    cache.cell !== layout.cell ||
+    cache.offsetX !== layout.offsetX ||
+    cache.offsetY !== layout.offsetY;
+  if (moved || now - cache.paintedAt >= FIELD_REPAINT_MS) {
+    const into = cache.canvas.getContext("2d");
+    if (into) {
+      into.clearRect(0, 0, cache.canvas.width, cache.canvas.height);
+      paintField(into, layout, reef, creatures, catalog, sights, now);
+    }
+    cache.cell = layout.cell;
+    cache.offsetX = layout.offsetX;
+    cache.offsetY = layout.offsetY;
+    cache.paintedAt = now;
+  }
+  ctx.drawImage(cache.canvas, 0, 0, width, height);
+}
+
+/**
+ * The field: a lattice of short strokes that leans around what is being
+ * perceived, in the colour of whatever is perceiving it.
+ *
+ * This is the piece. Quiet water is a faint, even weave all leaning the same
+ * slowly-turning way. Wherever a creature can see, the strokes swing to lie
+ * *around* it — perpendicular to the direction away from it, so they close
+ * into a whorl rather than bursting out of it — brighten, lengthen, and take
+ * that creature's own colour. Two creatures watching the same water make a
+ * two-coloured interference where their whorls meet.
+ *
+ * It is the same information as a circle drawn at `sight` units, and it is a
+ * far better drawing of it: a circle is a boundary somebody has to be told the
+ * meaning of, and this is the water visibly behaving differently inside one.
+ *
+ * A triangular lattice rather than a square one. A square grid of dots reads
+ * as graph paper — the eye finds the rows and columns immediately and then
+ * stops looking. Offsetting every other row by half a step gives no axis to
+ * lock onto, which is why every hand-drawn field in the world is laid out that
+ * way.
+ */
+function paintField(
+  ctx: CanvasRenderingContext2D,
+  layout: Layout,
+  reef: { readonly x: number; readonly y: number },
+  creatures: readonly DrawnCreature[],
+  catalog: readonly CatalogEntry[],
   sights: readonly number[],
   now: number,
 ): void {
-  const swell = 0.5 + 0.5 * Math.sin(now / 3400);
-  const dotBase = Math.max(0.7, layout.cell * 0.05);
-  for (let gy = LATTICE_STEP * 0.5; gy < reef.y; gy += LATTICE_STEP) {
-    for (let gx = LATTICE_STEP * 0.5; gx < reef.x; gx += LATTICE_STEP) {
+  // Batched, and the batching is not an optimisation to be embarrassed about
+  // -- it is the difference between this drawing existing and not. A stroke
+  // per lattice point is nine hundred `beginPath`/`stroke` pairs and nine
+  // hundred colour strings per frame, and it measured **twelve frames a
+  // second**. Grouping by a quantised colour and alpha collapses that to about
+  // twenty strokes, and nothing about the picture changes: six levels of alpha
+  // is more than an eye resolves in a stroke this thin.
+  const drift = now / 23000;
+  const unit = layout.cell * LATTICE_STEP;
+  const base = unit * 0.3;
+  const ALPHA_LEVELS = 6;
+
+  // One bucket per (species, alpha level), plus one for water nobody is
+  // watching, which is most of it.
+  const buckets = new Map<number, number[]>();
+  const push = (key: number, x1: number, y1: number, x2: number, y2: number) => {
+    let into = buckets.get(key);
+    if (!into) {
+      into = [];
+      buckets.set(key, into);
+    }
+    into.push(x1, y1, x2, y2);
+  };
+
+  const cx = creatures.map((c) => c.x);
+  const cy = creatures.map((c) => c.y);
+
+  let row = 0;
+  for (let gy = LATTICE_STEP * 0.5; gy < reef.y; gy += LATTICE_STEP * 0.866) {
+    row += 1;
+    const offset = row % 2 === 0 ? LATTICE_STEP * 0.5 : 0;
+    for (let gx = offset + LATTICE_STEP * 0.5; gx < reef.x; gx += LATTICE_STEP) {
       let lift = 0;
-      let pushX = 0;
-      let pushY = 0;
+      let aroundX = 0;
+      let aroundY = 0;
+      let loudest = -1;
+      let loudestWeight = 0;
       for (let i = 0; i < creatures.length; i += 1) {
-        const creature = creatures[i]!;
         const sight = sights[i]!;
-        const dx = gx - creature.x;
-        const dy = gy - creature.y;
-        const distance = Math.hypot(dx, dy);
-        if (distance >= sight || distance < 1e-6) {
+        const dx = gx - cx[i]!;
+        const dy = gy - cy[i]!;
+        const square = dx * dx + dy * dy;
+        if (square >= sight * sight || square < 1e-9) {
           continue;
         }
-        // Strongest at the creature and gone at the rim, squared so the
-        // brightening reads as a pool rather than as a disc with an edge.
+        const distance = Math.sqrt(square);
         const near = 1 - distance / sight;
         const weight = near * near;
         lift += weight;
-        pushX += (dx / distance) * weight;
-        pushY += (dy / distance) * weight;
+        // Perpendicular to the direction away: a whorl, not a burst.
+        aroundX += (-dy / distance) * weight;
+        aroundY += (dx / distance) * weight;
+        if (weight > loudestWeight) {
+          loudestWeight = weight;
+          loudest = i;
+        }
       }
-      const alpha = 0.085 + swell * 0.025 + Math.min(0.62, lift * 0.55);
-      const at = toPixel(
-        layout,
-        gx + pushX * LATTICE_PUSH,
-        gy + pushY * LATTICE_PUSH,
+
+      const idleAngle =
+        Math.sin(gx * 0.062 + drift) * 1.5 +
+        Math.cos(gy * 0.079 - drift * 0.7) * 1.2 +
+        Math.sin((gx + gy) * 0.031 + drift * 1.4) * 0.8;
+      const pull = lift > 1 ? 1 : lift;
+      const dirX = aroundX * pull + Math.cos(idleAngle) * (1 - pull);
+      const dirY = aroundY * pull + Math.sin(idleAngle) * (1 - pull);
+      const length = Math.sqrt(dirX * dirX + dirY * dirY);
+      const ux = length > 1e-6 ? dirX / length : 1;
+      const uy = length > 1e-6 ? dirY / length : 0;
+
+      const strength = lift > 1 ? 1 : lift;
+      const half = base * (0.72 + strength * 0.7);
+      const px0 = layout.offsetX + gx * layout.cell;
+      const py0 = layout.offsetY + gy * layout.cell;
+      const level = Math.min(
+        ALPHA_LEVELS - 1,
+        Math.round(strength * (ALPHA_LEVELS - 1)),
       );
-      const size = dotBase * (1 + Math.min(1.8, lift * 1.3));
-      ctx.fillStyle = `rgba(${LINE}, ${alpha})`;
-      ctx.fillRect(at.px - size, at.py - size, size * 2, size * 2);
+      const key = loudest < 0 || level === 0 ? -1 : loudest * ALPHA_LEVELS + level;
+      push(key, px0 - ux * half, py0 - uy * half, px0 + ux * half, py0 + uy * half);
     }
+  }
+
+  // Butt caps, not round. A round cap on a stroke this short is two extra
+  // arcs per segment and there are hundreds of them; nothing about the weave
+  // reads differently without them.
+  ctx.lineCap = "butt";
+  for (const [key, points] of buckets) {
+    let colour: string;
+    let alpha: number;
+    let width: number;
+    if (key < 0) {
+      colour = LINE;
+      alpha = 0.19;
+      width = Math.max(0.7, layout.cell * 0.024);
+    } else {
+      const species = Math.floor(key / ALPHA_LEVELS);
+      const level = key % ALPHA_LEVELS;
+      const strength = level / (ALPHA_LEVELS - 1);
+      const hex = catalog[creatures[species]?.species ?? 0]?.colour;
+      const [r, g, b] = hex ? rgbOf(hex) : [168, 226, 255];
+      colour = `${r}, ${g}, ${b}`;
+      alpha = 0.19 + strength * 0.55;
+      width = Math.max(0.7, layout.cell * (0.024 + strength * 0.026));
+    }
+    ctx.strokeStyle = `rgba(${colour}, ${alpha})`;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    for (let i = 0; i < points.length; i += 4) {
+      ctx.moveTo(points[i]!, points[i + 1]!);
+      ctx.lineTo(points[i + 2]!, points[i + 3]!);
+    }
+    ctx.stroke();
   }
 }
 
@@ -352,36 +535,72 @@ function drawKelp(
   for (const bed of kelp) {
     const centre = toPixel(layout, bed.x, bed.y);
     const r = bed.radius * layout.cell;
+
+    // A bed is drawn as a *hole* in the field rather than as another bright
+    // thing on top of it. The field is the loudest surface on the reef, so the
+    // way to make cover unmistakable is to take the field away: a dark mass,
+    // and the blades read against it instead of competing with the water. It
+    // also happens to be true — a thicket is where the light stops.
+    const shade = ctx.createRadialGradient(
+      centre.px,
+      centre.py,
+      r * 0.1,
+      centre.px,
+      centre.py,
+      r,
+    );
+    shade.addColorStop(0, "rgba(2, 10, 14, 0.9)");
+    shade.addColorStop(0.7, "rgba(2, 10, 14, 0.72)");
+    shade.addColorStop(1, "rgba(2, 10, 14, 0)");
+    ctx.save();
+    ctx.fillStyle = shade;
+    ctx.beginPath();
+    ctx.arc(centre.px, centre.py, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // The blades: exactly spaced, each swaying on its own phase, clipped to
+    // the bed. Even spacing is what makes it read as a grown thing rather than
+    // as scattered marks; the phase offset is what stops it reading as a comb.
     ctx.save();
     ctx.beginPath();
     ctx.arc(centre.px, centre.py, r, 0, Math.PI * 2);
     ctx.clip();
-
-    // The blades: exactly spaced, each swaying on its own phase. Even spacing
-    // is what makes it read as a grown thing rather than as scattered marks;
-    // the phase offset is what stops it reading as a comb.
-    const spacing = Math.max(2.5, layout.cell * 0.3);
+    const spacing = Math.max(3.4, layout.cell * 0.45);
     ctx.lineWidth = Math.max(0.8, layout.cell * 0.035);
     ctx.lineCap = "round";
+    // Three alpha buckets rather than one stroke per blade. Five beds of fifty
+    // blades was five hundred strokes a frame and it was most of why the reef
+    // ran at fifteen.
+    const LEVELS = 3;
+    const lanes: number[][] = [[], [], []];
     for (let x = centre.px - r; x <= centre.px + r; x += spacing) {
       const seed = hash2(bed.x + x, bed.y);
       const height = r * (0.75 + seed * 0.55);
       const period = 5200 + seed * 4200;
       const lean = Math.sin(now / period + seed * 8) * r * 0.2;
       const rootY = centre.py + r;
-      ctx.strokeStyle = `rgba(${KELP}, ${0.13 + seed * 0.17})`;
+      const lane = lanes[Math.min(LEVELS - 1, Math.floor(seed * LEVELS))]!;
+      lane.push(x, rootY, x + lean * 0.4, rootY - height * 0.55, x + lean, rootY - height);
+    }
+    for (let level = 0; level < LEVELS; level += 1) {
+      const seed = (level + 0.5) / LEVELS;
+      ctx.strokeStyle = `rgba(${KELP}, ${0.2 + seed * 0.28})`;
       ctx.beginPath();
-      ctx.moveTo(x, rootY);
-      ctx.quadraticCurveTo(x + lean * 0.4, rootY - height * 0.55, x + lean, rootY - height);
+      for (let i = 0; i < lanes[level]!.length; i += 6) {
+        const lane = lanes[level]!;
+        ctx.moveTo(lane[i]!, lane[i + 1]!);
+        ctx.quadraticCurveTo(lane[i + 2]!, lane[i + 3]!, lane[i + 4]!, lane[i + 5]!);
+      }
       ctx.stroke();
     }
     ctx.restore();
 
     // The bed's own outline, dashed, so a visitor can see where cover ends
-    // without the fronds having to reach the rim.
+    // without the blades having to reach the rim.
     ctx.save();
     ctx.setLineDash([layout.cell * 0.3, layout.cell * 0.45]);
-    ctx.strokeStyle = `rgba(${KELP}, 0.22)`;
+    ctx.strokeStyle = `rgba(${KELP}, 0.3)`;
     ctx.lineWidth = Math.max(0.8, layout.cell * 0.025);
     ctx.beginPath();
     ctx.arc(centre.px, centre.py, r, 0, Math.PI * 2);
@@ -423,16 +642,17 @@ function drawFood(
     // body, and the count of them rising with the amount gives food a scale
     // that is legible without a legend.
     const spokes = 3 + Math.round(fullness * 3);
-    ctx.strokeStyle = `rgba(${colour}, ${0.11 + fullness * 0.22})`;
+    ctx.strokeStyle = `rgba(${colour}, ${0.08 + fullness * 0.17})`;
     ctx.lineWidth = Math.max(0.7, layout.cell * 0.03);
+    ctx.beginPath();
     for (let i = 0; i < spokes; i += 1) {
       const a = (i / spokes) * Math.PI + index * 0.31 + now / 26000;
       const arm = r * breath;
-      ctx.beginPath();
       ctx.moveTo(centre.px - Math.cos(a) * arm, centre.py - Math.sin(a) * arm);
       ctx.lineTo(centre.px + Math.cos(a) * arm, centre.py + Math.sin(a) * arm);
-      ctx.stroke();
     }
+    ctx.stroke();
+
     ctx.fillStyle = `rgba(${colour}, ${0.35 + fullness * 0.4})`;
     ctx.beginPath();
     ctx.arc(centre.px, centre.py, Math.max(1, r * 0.11), 0, Math.PI * 2);
@@ -823,7 +1043,17 @@ export function render(
 
   drawGround(ctx, cssWidth, cssHeight, screen);
   drawHatch(ctx, cssWidth, cssHeight, now);
-  drawLattice(ctx, layout, snapshot.reef, creatures, sights, now);
+  drawField(
+    ctx,
+    layout,
+    snapshot.reef,
+    creatures,
+    snapshot.catalog,
+    sights,
+    now,
+    cssWidth,
+    cssHeight,
+  );
   drawKelp(ctx, layout, snapshot.kelp, now);
   drawFood(ctx, layout, snapshot.food, carcasses, now);
   drawTrails(ctx, layout, trails, snapshot.catalog, creatures, now);
