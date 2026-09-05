@@ -22,16 +22,16 @@ fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
 }
 
-/// The fixed seed and grid `tests/golden.rs` pins its expectation to.
+/// The fixed seed and reef `tests/golden.rs` pins its expectation to.
 pub const SEED: i64 = 2024;
-pub const WIDTH: i64 = 12;
-pub const HEIGHT: i64 = 8;
+pub const WIDTH: f64 = simulation::world::REEF_WIDTH;
+pub const HEIGHT: f64 = simulation::world::REEF_HEIGHT;
 pub const TICKS: i64 = 20;
 
 /// The world the browser check runs, which is the world the page presents.
 pub const BROWSER_SEED: i64 = 7;
-pub const BROWSER_WIDTH: i64 = 16;
-pub const BROWSER_HEIGHT: i64 = 12;
+pub const BROWSER_WIDTH: f64 = simulation::world::REEF_WIDTH;
+pub const BROWSER_HEIGHT: f64 = simulation::world::REEF_HEIGHT;
 pub const BROWSER_TICKS: i64 = 60;
 
 fn main() {

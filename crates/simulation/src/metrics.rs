@@ -27,9 +27,9 @@ pub struct TickMetrics {
     pub instructions: u64,
     pub fuel: u64,
     pub decisions: u64,
-    /// How many of this tick's decisions the world refused (an
-    /// `ActionResult::Refused`, not a `Blocked` — the reference's own
-    /// `refusals` counter only counts that case, and this mirrors it).
+    /// How many of this tick's decisions the reef refused
+    /// (`ActionResult::Refused`) — the world's own `refusals` counter counts
+    /// exactly this, and this mirrors it.
     pub refused: u64,
     /// Invocations this tick that ran out of fuel.
     pub failed_fuel: u64,

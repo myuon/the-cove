@@ -11,18 +11,18 @@ role = "Wildcard"
 
 [traits]
 # What one starts with.
-startingEnergy = 16
-# What a step costs on top of the one energy a tick costs everybody.
-# Nothing. A crab spends most of its life stepping away from somebody, and a
-# crab that paid a grazer's price for that was gone by the three hundredth
-# tick of every seed. Its rule is what it is; what the catalog can do about
-# the cost of the rule is this.
-stride = 0
+startingEnergy = 32
+# Top speed, in reef units per tick.
+cruise = 1.0
+# How much of the way to a new direction this species turns in one tick.
+# High: a crab is slow and turns on the spot.
+agility = 0.40
 # What one unit of food is worth to this species.
 # More than a grazer gets, because a crab eats far less often than one.
 forage = 7
-# The most of this species the world holds at once: one per this many cells.
-capacity = 25
+# The most of this species the world holds at once: one per this many
+# reef units.
+capacity = 675
 
 [visual]
 colour = "#e0b23c"

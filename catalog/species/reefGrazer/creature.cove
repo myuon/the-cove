@@ -3,55 +3,54 @@ use contract.Intent
 use contract.Observation
 use contract.Reason
 use contract.SelfView
+use contract.Sighting
 use instinct.away
 use instinct.nearest
 use instinct.richest
 use instinct.shelter
-use instinct.stepOr
 use instinct.threats
+use instinct.toward
 use instinct.wander
 
 // The reef grazer: eats what grows, and runs from what eats it.
 //
-// It is the species the other two are defined against. It has no way to
-// defend itself and no reason to wait, so its rule is short and in this
-// order: with a hunter next to it, step into cover if there is any and away
-// from the hunter otherwise; eat what is underfoot; leave while the hunter is
-// still two cells off; and, with nothing to run from, walk towards the most
-// food it can see.
+// It is the species the other three are defined against. It has no way to
+// defend itself and no reason to wait, so its rule is short and in this order:
+// with a hunter close, make for kelp if kelp is nearer than the hunter and
+// straight away from it otherwise; eat what is in reach; leave while the
+// hunter is still at the edge of sight; and, with nothing to run from, swim to
+// the fullest mouthful it can see.
 //
-// The order is the whole of the species. Fleeing a hunter that is two cells
-// away rather than eating is what a grazer that never grows up does, and one
-// that ate with a hunter beside it is one that gets eaten.
+// The order is the whole of the species. Fleeing a hunter that is still far
+// off rather than finishing a mouthful is what a grazer that never grows up
+// does, and one that ate with a hunter beside it is one that gets eaten.
+//
+// It flees at full effort and browses at a little over half. That is not
+// decoration: effort is speed, so a frightened grazer is visibly faster than a
+// feeding one, and somebody watching can tell which it is without being told.
 
 /// The one intent this grazer answers the tick with, and why.
 export fn decide(view: SelfView, observation: Observation) -> Decision {
   let danger = nearest(threats(observation.nearby))
   match danger {
-    Some(hunter) => if hunter.away < 2 {
-      return Decision(
-        intent: stepOr(
-          shelter(observation),
-          stepOr(away(hunter.at, observation), Intent.Rest),
-        ),
-        reason: Reason.FleeingThreat,
-      )
+    Some(hunter) => if hunter.away < alarm() {
+      return flee(hunter, observation)
     }
     None => ()
   }
-  if observation.here > 0 && view.energy < full() {
+  if observation.here > 0.0 && view.energy < full() {
     return Decision(intent: Intent.Eat, reason: Reason.Feeding)
   }
   match danger {
     Some(hunter) => return Decision(
-      intent: stepOr(away(hunter.at, observation), Intent.Rest),
+      intent: away(hunter.at, 0.7),
       reason: Reason.FleeingThreat,
     )
     None => ()
   }
   match richest(observation) {
-    Some(patch) => Decision(
-      intent: Intent.Move(patch.heading),
+    Some(morsel) => Decision(
+      intent: toward(morsel.at, 0.55),
       reason: Reason.SeekingFood,
     )
     None => Decision(
@@ -61,11 +60,36 @@ export fn decide(view: SelfView, observation: Observation) -> Decision {
   }
 }
 
+/// Kelp if kelp is nearer than the hunter, and straight away from it if not.
+///
+/// The comparison is the whole of the judgement. Kelp behind the hunter is
+/// kelp reached by swimming past it, and a grazer that made for cover on the
+/// far side of the thing chasing it would be a grazer feeding itself to it.
+fn flee(hunter: Sighting, observation: Observation) -> Decision {
+  match shelter(observation) {
+    Some(bed) => if bed.away < hunter.away {
+      Decision(intent: toward(bed.at, 1.0), reason: Reason.Sheltering)
+    } else {
+      Decision(intent: away(hunter.at, 1.0), reason: Reason.FleeingThreat)
+    }
+    None => Decision(intent: away(hunter.at, 1.0), reason: Reason.FleeingThreat)
+  }
+}
+
+/// How close a hunter has to be before a grazer stops eating.
+///
+/// Most of the way to the edge of what a grazer can see. Nearer than this and
+/// it is already too late for a creature that swims no faster than what is
+/// chasing it.
+fn alarm() -> Float {
+  11.0
+}
+
 /// The energy past which a grazer stops eating and moves on.
 ///
-/// A grazer that ate whatever it stood on would sit on one cell until the
-/// cell was bare, which is the behaviour of something that cannot count. This
-/// is the count.
+/// A grazer that ate whatever it was floating over would sit on one patch
+/// until the patch was bare, which is the behaviour of something that cannot
+/// count. This is the count.
 fn full() -> Int {
   26
 }

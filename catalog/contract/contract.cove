@@ -1,19 +1,45 @@
-// The contract between the world and a creature, and nothing else.
+// The contract between the reef and a creature, and nothing else.
 //
-// A species module imports this one, and `instinct`, which is written
-// against this one, and nothing else. That is the whole of the sandbox: a
-// species cannot name the simulation, so it cannot read the world it is not
-// being shown and cannot write the world at all. What it is handed are
-// values -- a `SelfView`, an `Observation` holding immutable arrays -- and
-// Cove copies a value into a call, so there is nothing for a behaviour to
-// reach back through. No runtime check enforces any of this; the module
-// boundary and the copy rule do.
+// A species module imports this one, and `instinct`, which is written against
+// this one, and nothing else. That is the whole of the sandbox: a species
+// cannot name the simulation, so it cannot read the reef it is not being shown
+// and cannot write any part of it at all. What it is handed are values -- a
+// `SelfView`, an `Observation` holding immutable arrays -- and Cove copies a
+// value into a call, so there is nothing for a behaviour to reach back
+// through. No runtime check enforces any of this; the module boundary and the
+// copy rule do.
 //
 // The host mirrors every type here in Rust, field for field and in order,
 // because `Vm::invoke` checks an argument against the declaration the checker
 // resolved before the first instruction runs. A field added here is a field
-// the host must add, and the boundary says so rather than reading past the
-// end of a struct.
+// the host must add, and the boundary says so rather than reading past the end
+// of a struct.
+//
+// # The reef is continuous, and every number in it is arithmetic
+//
+// A place is two `Float`s and not two cells. That is what lets a creature face
+// where it is going, turn rather than snap, and see a circle rather than a
+// diamond -- and a sight range that is a circle is a sight range somebody can
+// be shown, which is the whole reason any of this is drawn.
+//
+// It costs a rule, and the rule is short: the arithmetic of this world is
+// `+ - * /` and comparison, and the host adds `sqrt`. Nothing anywhere calls a
+// trigonometric or exponential function, and a direction is a vector and never
+// an angle.
+//
+// That is not a discipline anybody has to remember. Cove's `Float` offers
+// `abs`, `min`, `max`, `round`, `toInt` and `format`, and no square root and
+// no trigonometry at all, so a behaviour *cannot* reach one. Which is the
+// right answer rather than a lucky one: IEEE 754 says exactly what `+ - * /`
+// and `sqrt` produce and every conforming machine agrees, and says nothing
+// about `sin` or `atan2`, where two libraries differ in the last bits. A
+// shared replay link is a bet that the same seed makes the same world on
+// somebody else's computer, and that rule is what wins the bet.
+//
+// So a behaviour compares squared distances when it computes one itself, which
+// is what it should have been doing anyway. Where a real distance is worth
+// having -- how far off a creature is, how far off a mouthful is -- the host
+// has already taken the square root and written it down.
 
 /// What a creature does for a living.
 ///
@@ -23,11 +49,11 @@
 /// creature needs to tell its own kind apart from another kind in the same
 /// role.
 export enum Role {
-  /// Eats what grows where it stands.
+  /// Eats what grows where it swims.
   Grazer
   /// Waits in cover for something to come close.
   Ambusher
-  /// Walks the world looking for something to eat.
+  /// Swims the reef looking for something to eat.
   Hunter
   /// Eats what is already dead, and smells it from further than it sees.
   Scavenger
@@ -61,18 +87,10 @@ impl Role {
 
   /// Whether a hunter will chase a creature in this role.
   ///
-  /// A wildcard is not chased, and that is a rule about the world rather than
+  /// A wildcard is not chased, and that is a rule about the reef rather than
   /// about any particular wildcard: whatever one-rule creature the catalog
-  /// puts in this role, its rule is the point of it, and a creature that is
-  /// eaten before its rule has been seen is a creature that was not worth
-  /// writing. The first one had a shell, which is where the phrasing comes
-  /// from and is also literally true of it.
-  ///
-  /// It was measured rather than assumed. The hermit crab was extinct by the
-  /// hundredth tick of every seed while carrying an average energy of
-  /// twenty-seven out of a possible forty-four -- growing from five to
-  /// fifteen and then falling to nothing without ever going hungry. It was
-  /// not starving. It was being eaten.
+  /// puts in this role, its rule is the point of it, and a creature eaten
+  /// before its rule has been seen is a creature that was not worth writing.
   export fn isPrey(self) -> Bool {
     match self {
       Role.Grazer => true
@@ -83,53 +101,50 @@ impl Role {
   }
 }
 
-/// A place in the grid, and also a step from one place to another.
+/// A place in the reef, and also a direction from one place to another.
 ///
-/// One type for both because a step is what the difference of two places is,
-/// and a second struct with the same two fields would only make the addition
-/// need a conversion.
-export struct Cell {
-  x: Int
-  y: Int
+/// One type for both, because a direction is what the difference of two places
+/// is, and a second struct with the same two fields would only make the
+/// subtraction need a conversion.
+export struct Point {
+  x: Float
+  y: Float
 }
 
-/// The four directions a step may take.
-export enum Heading {
-  North
-  East
-  South
-  West
-}
-
-impl Heading {
-  /// The step this heading is.
-  export fn step(self) -> Cell {
-    match self {
-      Heading.North => Cell(x: 0, y: -1)
-      Heading.East => Cell(x: 1, y: 0)
-      Heading.South => Cell(x: 0, y: 1)
-      Heading.West => Cell(x: -1, y: 0)
-    }
+impl Point {
+  /// The two added.
+  export fn plus(self, other: Point) -> Point {
+    Point(x: self.x + other.x, y: self.y + other.y)
   }
 
-  /// The word this heading is written with.
-  export fn name(self) -> String {
-    match self {
-      Heading.North => "north"
-      Heading.East => "east"
-      Heading.South => "south"
-      Heading.West => "west"
-    }
+  /// The direction from `other` to here.
+  export fn minus(self, other: Point) -> Point {
+    Point(x: self.x - other.x, y: self.y - other.y)
   }
-}
 
-/// Every heading, in the order a tie is broken in.
-///
-/// The order is north, east, south, west, and it is written down here rather
-/// than left to each behaviour, because two species that broke a tie
-/// differently would make the same run depend on which one moved first.
-export fn headings() -> Array<Heading> {
-  [Heading.North, Heading.East, Heading.South, Heading.West]
+  /// This direction, `by` times as long.
+  export fn scaled(self, by: Float) -> Point {
+    Point(x: self.x * by, y: self.y * by)
+  }
+
+  /// The place halfway between the two.
+  export fn between(self, other: Point) -> Point {
+    Point(x: (self.x + other.x) * 0.5, y: (self.y + other.y) * 0.5)
+  }
+
+  /// How far `other` is from here, squared.
+  ///
+  /// Squared, and named so. There is no square root in this language and none
+  /// is wanted here: comparing two distances is comparing their squares, so
+  /// the root would be a slower way to the same answer -- and it would be the
+  /// one operation two machines might answer differently, which is what a
+  /// shared replay cannot afford. Where a real distance is worth having, the
+  /// host has already taken it: see `Sighting.away`.
+  export fn squaredTo(self, other: Point) -> Float {
+    let dx = self.x - other.x
+    let dy = self.y - other.y
+    dx * dx + dy * dy
+  }
 }
 
 /// What a creature is told about itself.
@@ -138,83 +153,125 @@ export struct SelfView {
   /// Which catalog entry this creature was spawned from.
   species: Int
   role: Role
-  at: Cell
+  at: Point
+  /// Where it is pointing, as a direction one unit long.
+  ///
+  /// A creature turns rather than snapping: the reef limits how far this may
+  /// swing in one tick, so a behaviour that asks to reverse gets a turn and
+  /// not a teleport. That limit is what makes a chase worth watching, and it
+  /// is why a creature that wants to be somewhere should keep asking rather
+  /// than ask once.
+  facing: Point
+  /// How fast it is actually moving, which is not how fast it asked to.
+  speed: Float
   energy: Int
   age: Int
+  /// Whether it is inside kelp, where nothing sees it and no hunt reaches.
   hidden: Bool
-  /// What the world did with the intent this creature answered last tick.
+  /// What the reef did with the intent this creature answered last tick.
   ///
-  /// It is here so that a behaviour can be wrong about the world and find
-  /// out. A refusal costs a tick, and a species that never reads this one
-  /// pays it again every tick for as long as it is wrong.
+  /// It is here so that a behaviour can be wrong about the reef and find out.
+  /// A refusal costs a tick, and a species that never reads this one pays it
+  /// again every tick for as long as it is wrong.
   last: ActionResult
 }
 
 /// Another creature, as this one can see it.
-///
-/// `away` is the number of steps between the two, so a behaviour never has to
-/// compute a distance and two behaviours cannot compute it differently.
 export struct Sighting {
   id: Int
   species: Int
   role: Role
-  at: Cell
-  away: Int
+  at: Point
+  /// How far off it is, for real: the host has taken the square root.
+  away: Float
+  /// Which way it is pointing, so a behaviour can tell something coming at it
+  /// from something leaving.
+  facing: Point
   hidden: Bool
 }
 
-/// One of the four cells a creature could step onto.
-export struct Patch {
-  heading: Heading
-  at: Cell
-  food: Int
-  shelter: Bool
-  /// Whether this cell is off the edge of the world.
-  outside: Bool
-  /// Whether a creature stood here when the tick began.
-  occupied: Bool
+/// Something to eat, as this creature can see it.
+///
+/// The reef's food drifts in patches rather than sitting in cells. A creature
+/// eats by being inside one, so `away` under `radius` is a mouthful and not a
+/// journey.
+export struct Morsel {
+  at: Point
+  /// How much is left in it.
+  amount: Float
+  radius: Float
+  away: Float
 }
 
-/// Everything a creature is told about the world this tick.
+/// A bed of kelp, as this creature can see it.
 ///
-/// It is bounded: four patches, and a handful of sightings, nearest first. A
-/// behaviour that wants to see further cannot, which is what makes the cost of
-/// a tick a function of the population and not of its square.
+/// Inside one a creature is hidden: nothing sees it and no hunt reaches it.
+/// That is the whole of what cover is, and it is the only place on the reef
+/// where being still is better than being fast.
+export struct Bed {
+  at: Point
+  radius: Float
+  away: Float
+}
+
+/// Everything a creature is told about the reef this tick.
 ///
-/// How far and how many are the world's decisions and are not written here. A
-/// creature never asks how far it can see; it is shown what it is shown, and
-/// this type is the whole of what it was shown. Three functions saying
-/// otherwise used to sit at the bottom of this file -- `sightRange`, `smells`
-/// and `sightLimit` -- and no species ever called one of them: the host
-/// applied its own copy of each rule while these described it in a language
-/// the host does not evaluate. They disagreed within a day, and nobody would
-/// have found out, because a rule nothing calls is a rule nothing tests.
+/// It is bounded, and bounded by count rather than by distance: at most four
+/// creatures, three mouthfuls and two beds, nearest first. A behaviour that
+/// wants to see more cannot, which is what makes the cost of a tick a function
+/// of the population and not of its square.
 export struct Observation {
   tick: Int
-  /// How much food is in the cell this creature is standing in.
-  here: Int
-  /// Whether the cell this creature is standing in is a shelter.
-  shelter: Bool
-  around: Array<Patch>
+  /// The far corner of the reef. The near one is the origin.
+  reef: Point
+  /// How far this creature can see. Everything below was inside it.
+  sight: Float
+  /// How far this creature's lunge reaches.
+  ///
+  /// The reef's rule, told to the creature rather than left for it to guess.
+  /// A species that wrote its own copy of this number would be a species
+  /// holding one of the reef's rules in a second place, and the two would
+  /// disagree the first time either moved -- which has already happened here
+  /// twice, and both times nothing could have caught it.
+  reach: Float
+  /// How much food is in reach of this creature right now, at all.
+  here: Float
+  /// Whether this creature is inside kelp.
+  sheltered: Bool
   nearby: Array<Sighting>
-  /// The way to the most food within this creature's range, for a role that
-  /// can smell one. It is `None` for the roles that cannot, and it is what
-  /// makes a scavenger something other than a slow grazer: a carcass three
-  /// cells away is invisible to everything here except the thing that eats
-  /// carcasses.
-  scent: Option<Heading>
+  food: Array<Morsel>
+  kelp: Array<Bed>
 }
 
-/// The one thing a behaviour asks the world for this tick.
+/// Where a creature is going and how hard it is trying.
+///
+/// `effort` runs from zero to one and the reef clamps it there. It buys speed
+/// and it costs energy, and both of those are why a flee looks like a flee: a
+/// frightened creature moves visibly faster than a browsing one, and pays for
+/// it.
+export struct Aim {
+  at: Point
+  effort: Float
+}
+
+/// The one thing a behaviour asks the reef for this tick.
 ///
 /// Exactly one, whatever the creature would rather do. A behaviour that wants
-/// to move and eat has to decide which, and the world resolves what it said
+/// to swim and eat has to decide which, and the reef resolves what it said
 /// rather than what it meant.
 export enum Intent {
-  Move(Heading)
+  /// Swim towards a place.
+  Toward(Aim)
+  /// Swim away from a place. The reef works out what that means at a wall,
+  /// which a behaviour cannot and should not have to.
+  Away(Aim)
+  /// Take a mouthful of whatever is in reach.
   Eat
+  /// Lunge at a creature. It has to be close, and no hunt reaches into kelp.
   Hunt(Int)
+  /// Get into cover, or stay in it.
   Hide
+  /// Stop, and spend nothing but the cost of being alive.
   Rest
 }
 
@@ -222,7 +279,8 @@ impl Intent {
   /// The word this intent is written with.
   export fn name(self) -> String {
     match self {
-      Intent.Move(heading) => "move-{heading.name()}"
+      Intent.Toward(_) => "toward"
+      Intent.Away(_) => "away"
       Intent.Eat => "eat"
       Intent.Hunt(id) => "hunt-{id}"
       Intent.Hide => "hide"
@@ -234,17 +292,17 @@ impl Intent {
 /// Why a behaviour asked for what it asked for.
 ///
 /// A small closed vocabulary, because this is what a visitor is shown. The
-/// interface turns one of these into a sentence about a creature it is
+/// interface turns one of these into a sentence about a creature somebody is
 /// watching, so a species that invented its own reason would be a species
 /// nobody could be told about. What a reason does not carry is the detail --
-/// which predator, which cell -- because the trace already has it and a
-/// second copy would be a second thing to keep true.
+/// which hunter, which mouthful -- because the observation already has it and
+/// a second copy would be a second thing to keep true.
 export enum Reason {
   /// Something that hunts this creature is close enough to matter.
   FleeingThreat
   /// Going to where the food is.
   SeekingFood
-  /// Eating what is here.
+  /// Eating what is in reach.
   Feeding
   /// Getting into, or staying in, cover.
   Sheltering
@@ -259,11 +317,11 @@ export enum Reason {
 }
 
 impl Reason {
-  /// The word this reason is written with.
+  /// The stable identifier this reason is written with.
   ///
-  /// A stable identifier rather than a sentence: the sentence is written in
-  /// the interface, in the visitor's language, and a reason that carried its
-  /// own prose would have to be translated in the catalog.
+  /// Not a sentence: the sentence is written in the interface, in the
+  /// visitor's language, and a reason that carried its own prose would have to
+  /// be translated in the catalog.
   export fn name(self) -> String {
     match self {
       Reason.FleeingThreat => "fleeing_threat"
@@ -280,10 +338,10 @@ impl Reason {
 
 /// What one creature answered one tick with.
 ///
-/// The intent is what the world resolves and the reason is what the visitor
-/// is told. They are one value because a behaviour that returned them
-/// separately could return an intent and a reason that did not match, and
-/// nothing would notice.
+/// The intent is what the reef resolves and the reason is what the visitor is
+/// told. They are one value because a behaviour that returned them separately
+/// could return an intent and a reason that did not match, and nothing would
+/// notice.
 export struct Decision {
   intent: Intent
   reason: Reason
@@ -296,18 +354,19 @@ impl Decision {
   }
 }
 
-/// What the world did with an intent.
+/// What the reef did with an intent.
 ///
-/// Every case but the last is something that happened. `Refused` is the
-/// world declining an intent it will not carry out -- a step off the edge, a
-/// meal in an empty cell, a hunt of a creature that is not there -- and it
-/// costs the creature that tick and nothing else.
+/// Every case but the last is something that happened. `Refused` is the reef
+/// declining an intent it will not carry out -- a mouthful where there is
+/// nothing to eat, a hunt of a creature that is not there, hiding where there
+/// is no kelp -- and it costs the creature that tick and nothing else.
 export enum ActionResult {
   /// This creature has not acted yet.
   Spawned
-  Moved(Heading)
-  Blocked(Heading)
-  Ate(Int)
+  /// It moved, this far.
+  Swam(Float)
+  /// It ate this much.
+  Ate(Float)
   Hunted(Int)
   Missed(Int)
   Hid
@@ -320,9 +379,8 @@ impl ActionResult {
   export fn name(self) -> String {
     match self {
       ActionResult.Spawned => "spawned"
-      ActionResult.Moved(heading) => "moved-{heading.name()}"
-      ActionResult.Blocked(heading) => "blocked-{heading.name()}"
-      ActionResult.Ate(amount) => "ate-{amount}"
+      ActionResult.Swam(_) => "swam"
+      ActionResult.Ate(_) => "ate"
       ActionResult.Hunted(id) => "hunted-{id}"
       ActionResult.Missed(id) => "missed-{id}"
       ActionResult.Hid => "hid"
@@ -331,25 +389,11 @@ impl ActionResult {
     }
   }
 
-  /// Why the world refused this intent, for a result that is a refusal.
+  /// Why the reef refused this intent, for a result that is a refusal.
   export fn refusal(self) -> Option<String> {
     match self {
       ActionResult.Refused(why) => Some(why)
       _ => None
     }
-  }
-}
-
-/// The distance between two cells, in steps.
-export fn stepsBetween(from: Cell, to: Cell) -> Int {
-  span(from.x, to.x) + span(from.y, to.y)
-}
-
-/// The distance between two coordinates.
-fn span(from: Int, to: Int) -> Int {
-  if from > to {
-    from - to
-  } else {
-    to - from
   }
 }

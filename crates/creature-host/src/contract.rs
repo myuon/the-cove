@@ -13,6 +13,16 @@
 //!
 //! Nothing downstream of [`Decision::of`] holds a [`Value`]. The simulation
 //! acts on these types.
+//!
+//! # The reef is continuous
+//!
+//! A place is two [`f64`]s and not two cells, and every arithmetic operation
+//! on one is `+ - * /` or [`f64::sqrt`] — the same rule `contract.cove`
+//! states for the Cove side of this boundary, and for the same reason: IEEE
+//! 754 specifies those exactly and every conforming machine agrees, so a
+//! shared replay link's bet that the same seed makes the same world on
+//! somebody else's computer is a bet those operations, and only those, can
+//! win.
 
 use cove_runtime::value::Value;
 
@@ -20,64 +30,100 @@ use cove_runtime::value::Value;
 /// declared type name carries across the boundary.
 const CONTRACT: &str = "contract";
 
-/// A place in the grid, and also a step from one place to another.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Cell {
-    pub x: i64,
-    pub y: i64,
+/// A place in the reef, and also a direction from one place to another.
+///
+/// One type for both, mirroring `contract.cove`'s own choice: a direction is
+/// what the difference of two places is, and a second Rust struct with the
+/// same two fields would only make every conversion between them a place
+/// this port could disagree with itself.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Point {
+    pub x: f64,
+    pub y: f64,
 }
 
-impl Cell {
+impl Point {
+    pub const ZERO: Point = Point { x: 0.0, y: 0.0 };
+
+    pub fn new(x: f64, y: f64) -> Point {
+        Point { x, y }
+    }
+
+    /// The two added.
+    pub fn plus(self, other: Point) -> Point {
+        Point {
+            x: self.x + other.x,
+            y: self.y + other.y,
+        }
+    }
+
+    /// The direction from `other` to here.
+    pub fn minus(self, other: Point) -> Point {
+        Point {
+            x: self.x - other.x,
+            y: self.y - other.y,
+        }
+    }
+
+    /// This direction, `by` times as long.
+    pub fn scaled(self, by: f64) -> Point {
+        Point {
+            x: self.x * by,
+            y: self.y * by,
+        }
+    }
+
+    /// How far `other` is from here, squared.
+    pub fn squared_to(self, other: Point) -> f64 {
+        let dx = self.x - other.x;
+        let dy = self.y - other.y;
+        dx * dx + dy * dy
+    }
+
+    /// This point's distance from the origin, squared.
+    pub fn squared_length(self) -> f64 {
+        self.x * self.x + self.y * self.y
+    }
+
+    /// How far `other` is from here, for real — the one place in the host
+    /// that is allowed to take a square root of a distance and hand it to a
+    /// creature, per `contract.cove`'s rule.
+    pub fn distance_to(self, other: Point) -> f64 {
+        self.squared_to(other).sqrt()
+    }
+
+    /// This direction, one unit long, or `None` when it is too short to have
+    /// a meaningful direction at all.
+    ///
+    /// The host's own sqrt, and the only place in this module that takes
+    /// one: everything a creature is shown is either an already-square-rooted
+    /// distance or a vector a creature never has to normalise itself, because
+    /// the language it is written in has no square root to normalise one
+    /// with.
+    pub fn normalize(self) -> Option<Point> {
+        let length = self.squared_length().sqrt();
+        if length > 1e-9 {
+            Some(Point {
+                x: self.x / length,
+                y: self.y / length,
+            })
+        } else {
+            None
+        }
+    }
+
     fn to_cove(self) -> Value {
         Value::structure(
-            format!("{CONTRACT}.Cell"),
-            vec![("x", Value::int(self.x)), ("y", Value::int(self.y))],
+            format!("{CONTRACT}.Point"),
+            vec![("x", Value::float(self.x)), ("y", Value::float(self.y))],
         )
     }
-}
 
-/// The four directions a step may take.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Heading {
-    North,
-    East,
-    South,
-    West,
-}
-
-impl Heading {
-    /// The case name the contract declares, which is what crosses.
-    pub fn case(self) -> &'static str {
-        match self {
-            Heading::North => "North",
-            Heading::East => "East",
-            Heading::South => "South",
-            Heading::West => "West",
-        }
-    }
-
-    /// The word a report writes this heading with, matching `Heading.name`.
-    pub fn name(self) -> &'static str {
-        match self {
-            Heading::North => "north",
-            Heading::East => "east",
-            Heading::South => "south",
-            Heading::West => "west",
-        }
-    }
-
-    fn to_cove(self) -> Value {
-        Value::enumeration(format!("{CONTRACT}.Heading"), self.case(), [])
-    }
-
-    fn of(value: &Value) -> Result<Heading, String> {
-        match case(value)? {
-            "North" => Ok(Heading::North),
-            "East" => Ok(Heading::East),
-            "South" => Ok(Heading::South),
-            "West" => Ok(Heading::West),
-            other => Err(format!("`{other}` is not a heading")),
-        }
+    fn of(value: &Value) -> Result<Point, String> {
+        Ok(Point {
+            x: float(field(value, "x")?)?,
+            y: float(field(value, "y")?)?,
+        })
     }
 }
 
@@ -129,12 +175,13 @@ impl Role {
 }
 
 /// What the world did with an intent.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ActionResult {
     Spawned,
-    Moved(Heading),
-    Blocked(Heading),
-    Ate(i64),
+    /// It moved, this far.
+    Swam(f64),
+    /// It ate this much.
+    Ate(f64),
     Hunted(i64),
     Missed(i64),
     Hid,
@@ -147,9 +194,10 @@ impl ActionResult {
         let name = format!("{CONTRACT}.ActionResult");
         match self {
             ActionResult::Spawned => Value::enumeration(name, "Spawned", []),
-            ActionResult::Moved(h) => Value::enumeration(name, "Moved", [h.to_cove()]),
-            ActionResult::Blocked(h) => Value::enumeration(name, "Blocked", [h.to_cove()]),
-            ActionResult::Ate(n) => Value::enumeration(name, "Ate", [Value::int(*n)]),
+            ActionResult::Swam(distance) => {
+                Value::enumeration(name, "Swam", [Value::float(*distance)])
+            }
+            ActionResult::Ate(amount) => Value::enumeration(name, "Ate", [Value::float(*amount)]),
             ActionResult::Hunted(n) => Value::enumeration(name, "Hunted", [Value::int(*n)]),
             ActionResult::Missed(n) => Value::enumeration(name, "Missed", [Value::int(*n)]),
             ActionResult::Hid => Value::enumeration(name, "Hid", []),
@@ -176,9 +224,8 @@ impl ActionResult {
     pub fn name(&self) -> String {
         match self {
             ActionResult::Spawned => "spawned".to_string(),
-            ActionResult::Moved(h) => format!("moved-{}", h.name()),
-            ActionResult::Blocked(h) => format!("blocked-{}", h.name()),
-            ActionResult::Ate(n) => format!("ate-{n}"),
+            ActionResult::Swam(_) => "swam".to_string(),
+            ActionResult::Ate(_) => "ate".to_string(),
             ActionResult::Hunted(n) => format!("hunted-{n}"),
             ActionResult::Missed(n) => format!("missed-{n}"),
             ActionResult::Hid => "hid".to_string(),
@@ -189,12 +236,14 @@ impl ActionResult {
 }
 
 /// What a creature is told about itself.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SelfView {
     pub id: i64,
     pub species: i64,
     pub role: Role,
-    pub at: Cell,
+    pub at: Point,
+    pub facing: Point,
+    pub speed: f64,
     pub energy: i64,
     pub age: i64,
     pub hidden: bool,
@@ -204,7 +253,7 @@ pub struct SelfView {
 impl SelfView {
     /// This view as the struct value `contract.SelfView` names.
     ///
-    /// Eight fields, in the order the declaration lists them. Adding one to
+    /// Ten fields, in the order the declaration lists them. Adding one to
     /// the contract without adding it here is refused at the boundary rather
     /// than read past.
     pub fn to_cove(&self) -> Value {
@@ -215,6 +264,8 @@ impl SelfView {
                 ("species", Value::int(self.species)),
                 ("role", self.role.to_cove()),
                 ("at", self.at.to_cove()),
+                ("facing", self.facing.to_cove()),
+                ("speed", Value::float(self.speed)),
                 ("energy", Value::int(self.energy)),
                 ("age", Value::int(self.age)),
                 ("hidden", Value::bool(self.hidden)),
@@ -225,13 +276,14 @@ impl SelfView {
 }
 
 /// Another creature, as this one can see it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sighting {
     pub id: i64,
     pub species: i64,
     pub role: Role,
-    pub at: Cell,
-    pub away: i64,
+    pub at: Point,
+    pub away: f64,
+    pub facing: Point,
     pub hidden: bool,
 }
 
@@ -244,49 +296,71 @@ impl Sighting {
                 ("species", Value::int(self.species)),
                 ("role", self.role.to_cove()),
                 ("at", self.at.to_cove()),
-                ("away", Value::int(self.away)),
+                ("away", Value::float(self.away)),
+                ("facing", self.facing.to_cove()),
                 ("hidden", Value::bool(self.hidden)),
             ],
         )
     }
 }
 
-/// One of the four cells a creature could step onto.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Patch {
-    pub heading: Heading,
-    pub at: Cell,
-    pub food: i64,
-    pub shelter: bool,
-    pub outside: bool,
-    pub occupied: bool,
+/// Something to eat, as this creature can see it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Morsel {
+    pub at: Point,
+    pub amount: f64,
+    pub radius: f64,
+    pub away: f64,
 }
 
-impl Patch {
+impl Morsel {
     fn to_cove(self) -> Value {
         Value::structure(
-            format!("{CONTRACT}.Patch"),
+            format!("{CONTRACT}.Morsel"),
             vec![
-                ("heading", self.heading.to_cove()),
                 ("at", self.at.to_cove()),
-                ("food", Value::int(self.food)),
-                ("shelter", Value::bool(self.shelter)),
-                ("outside", Value::bool(self.outside)),
-                ("occupied", Value::bool(self.occupied)),
+                ("amount", Value::float(self.amount)),
+                ("radius", Value::float(self.radius)),
+                ("away", Value::float(self.away)),
             ],
         )
     }
 }
 
-/// Everything a creature is told about the world this tick.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A bed of kelp, as this creature can see it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bed {
+    pub at: Point,
+    pub radius: f64,
+    pub away: f64,
+}
+
+impl Bed {
+    fn to_cove(self) -> Value {
+        Value::structure(
+            format!("{CONTRACT}.Bed"),
+            vec![
+                ("at", self.at.to_cove()),
+                ("radius", Value::float(self.radius)),
+                ("away", Value::float(self.away)),
+            ],
+        )
+    }
+}
+
+/// Everything a creature is told about the reef this tick.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Observation {
     pub tick: i64,
-    pub here: i64,
-    pub shelter: bool,
-    pub around: Vec<Patch>,
+    /// The far corner of the reef. The near one is the origin.
+    pub reef: Point,
+    pub sight: f64,
+    pub reach: f64,
+    pub here: f64,
+    pub sheltered: bool,
     pub nearby: Vec<Sighting>,
-    pub scent: Option<Heading>,
+    pub food: Vec<Morsel>,
+    pub kelp: Vec<Bed>,
 }
 
 impl Observation {
@@ -296,32 +370,49 @@ impl Observation {
             format!("{CONTRACT}.Observation"),
             vec![
                 ("tick", Value::int(self.tick)),
-                ("here", Value::int(self.here)),
-                ("shelter", Value::bool(self.shelter)),
-                (
-                    "around",
-                    Value::array(self.around.iter().copied().map(Patch::to_cove)),
-                ),
+                ("reef", self.reef.to_cove()),
+                ("sight", Value::float(self.sight)),
+                ("reach", Value::float(self.reach)),
+                ("here", Value::float(self.here)),
+                ("sheltered", Value::bool(self.sheltered)),
                 (
                     "nearby",
                     Value::array(self.nearby.iter().copied().map(Sighting::to_cove)),
                 ),
                 (
-                    "scent",
-                    match self.scent {
-                        Some(heading) => Value::some(heading.to_cove()),
-                        None => Value::none(),
-                    },
+                    "food",
+                    Value::array(self.food.iter().copied().map(Morsel::to_cove)),
+                ),
+                (
+                    "kelp",
+                    Value::array(self.kelp.iter().copied().map(Bed::to_cove)),
                 ),
             ],
         )
     }
 }
 
-/// The one thing a behaviour asks the world for this tick.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Where a creature is going and how hard it is trying.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Aim {
+    pub at: Point,
+    pub effort: f64,
+}
+
+impl Aim {
+    fn of(value: &Value) -> Result<Aim, String> {
+        Ok(Aim {
+            at: Point::of(field(value, "at")?)?,
+            effort: float(field(value, "effort")?)?,
+        })
+    }
+}
+
+/// The one thing a behaviour asks the reef for this tick.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Intent {
-    Move(Heading),
+    Toward(Aim),
+    Away(Aim),
     Eat,
     Hunt(i64),
     Hide,
@@ -332,7 +423,8 @@ impl Intent {
     /// The word this intent is written with, matching `Intent.name`.
     pub fn name(self) -> String {
         match self {
-            Intent::Move(h) => format!("move-{}", h.name()),
+            Intent::Toward(_) => "toward".to_string(),
+            Intent::Away(_) => "away".to_string(),
             Intent::Eat => "eat".to_string(),
             Intent::Hunt(id) => format!("hunt-{id}"),
             Intent::Hide => "hide".to_string(),
@@ -343,7 +435,8 @@ impl Intent {
     fn of(value: &Value) -> Result<Intent, String> {
         let payload = value.payload().unwrap_or(&[]);
         match case(value)? {
-            "Move" => Ok(Intent::Move(Heading::of(one(payload, "Move")?)?)),
+            "Toward" => Ok(Intent::Toward(Aim::of(one(payload, "Toward")?)?)),
+            "Away" => Ok(Intent::Away(Aim::of(one(payload, "Away")?)?)),
             "Eat" => Ok(Intent::Eat),
             "Hunt" => Ok(Intent::Hunt(int(one(payload, "Hunt")?)?)),
             "Hide" => Ok(Intent::Hide),
@@ -399,7 +492,7 @@ impl Reason {
 }
 
 /// What one creature answered one tick with.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Decision {
     pub intent: Intent,
     pub reason: Reason,
@@ -449,4 +542,10 @@ fn int(value: &Value) -> Result<i64, String> {
     value
         .as_int()
         .ok_or_else(|| format!("{} is not an Int", value.type_name()))
+}
+
+fn float(value: &Value) -> Result<f64, String> {
+    value
+        .as_float()
+        .ok_or_else(|| format!("{} is not a Float", value.type_name()))
 }

@@ -34,7 +34,8 @@ fn looping_roster() -> Roster {
             name: "Looping".to_string(),
             role: Role::Wildcard,
             starting_energy: 40,
-            stride: 1,
+            cruise: 1.0,
+            agility: 0.3,
             forage: 5,
             capacity: 1_000_000,
             visual: simulation::catalog::VisualDef {
@@ -70,8 +71,8 @@ fn looping_species() -> Species {
 #[test]
 fn a_world_with_an_always_failing_creature_still_ticks_and_counts_its_failures() {
     let roster = looping_roster();
-    let width = 6;
-    let height = 6;
+    let width = 20.0;
+    let height = 20.0;
     let mut world = new_world(99, width, height, &roster);
     let starting_alive = world.creatures.len();
     assert!(starting_alive > 0, "the world should start with founders");

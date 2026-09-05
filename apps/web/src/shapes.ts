@@ -1,43 +1,27 @@
-// Drawing one creature.
+// Drawing one creature's static silhouette — the legend's swatch, and
+// nothing on the moving reef itself.
 //
 // A tank told apart by hue alone is a tank a colour-blind visitor cannot
 // read, so every species carries a shape as well as a colour
-// (`species.toml`'s `visual.shape`), and this is the one place all four are
-// drawn. `heading` only affects `wedge` — the shape that has a "front" to
-// point somewhere — and is derived straight from what the creature is doing
-// this tick rather than remembered, so a creature that is not currently
-// moving or facing anything in particular just keeps its default heading.
+// (`species.toml`'s `visual.shape`), and this is where the legend draws a
+// small unmoving icon of each one. The tank's own creatures are drawn by
+// `renderer.ts`, which gives each one a body and a tail that orients along
+// its `facing` and undulates with its `speed` — a fixed icon has neither, so
+// it stays here and the live rendering does not call it.
+//
+// There is no more `headingAngleOf`: the old grid encoded a creature's
+// heading in strings like `moved-north`, and a continuous reef never does —
+// a creature's `facing` is a unit vector on the snapshot already, and an
+// angle is one `Math.atan2` away wherever the live renderer wants one.
 
 export type Shape = "round" | "wedge" | "ring" | "spiral";
 
-/** The four headings a `moved-*` or `move-*` string can name, as radians. */
-const HEADING_ANGLE: Readonly<Record<string, number>> = {
-  north: -Math.PI / 2,
-  east: 0,
-  south: Math.PI / 2,
-  west: Math.PI,
-};
-
 /**
- * The heading named by a `moved-north`, `blocked-east`, or `move-west`
- * style string, or `null` if `text` does not end in one of the four
- * directions (`eat`, `hunt-7`, `hide`, `rest`, `hid`, `rested`, ...).
- */
-export function headingAngleOf(text: string): number | null {
-  for (const [name, angle] of Object.entries(HEADING_ANGLE)) {
-    if (text.endsWith(name)) {
-      return angle;
-    }
-  }
-  return null;
-}
-
-/**
- * One creature's radius in pixels, from its catalog `size` and the cell it
- * is drawn in. `size` in the catalog runs 3 to 4 across today's four
- * species; the formula is deliberately gentle about that so a fifth species
- * with a size outside that range still draws as a plausible fraction of a
- * cell rather than overflowing it.
+ * One legend swatch's radius in pixels, from its catalog `size` and the
+ * pixel budget the caller drew it in. `size` in the catalog runs 3 to 4
+ * across today's four species; the formula is deliberately gentle about
+ * that so a fifth species with a size outside that range still draws as a
+ * plausible fraction of the swatch rather than overflowing it.
  */
 export function radiusOf(cellPixels: number, size: number): number {
   return cellPixels * (0.16 + size * 0.045);

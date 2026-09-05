@@ -1,11 +1,14 @@
 # The Cove — the browser tank
 
-The page: a Canvas 2D tide pool driven by the WebAssembly module
+The page: a Canvas 2D aquarium driven by the WebAssembly module
 `crates/tank-wasm` builds. The browser holds no simulation logic of its own —
 it opens a tank, ticks it, and draws the snapshot it is handed. Everything
 about what a creature does, why, and what the world let it do lives in Cove
 source under `catalog/species/` and the Rust simulation in
-`crates/simulation`; this is the page that watches it.
+`crates/simulation`; this is the page that watches it. The reef itself is
+continuous — a place is two floats, not two cells — and `docs/look.md` is the
+art direction this page draws to: dim, slow, luminous water rather than a
+diagram of one.
 
 There is no framework and no bundler. TypeScript is the only dependency, and
 it compiles straight to ES modules the browser loads directly.
@@ -65,10 +68,10 @@ $ npm test
 ```
 
 Runs `node --test` over `test/*.test.mjs`, which exercises the pure functions
-the loop and renderer are built from — grid layout, tick accumulation,
-cross-tick interpolation, cover, the rolling averages the panel reads — against
-the compiled `dist/`. Run `npm run build` first; it imports compiled output,
-not the TypeScript source.
+the loop and renderer are built from — reef layout, tick accumulation,
+cross-tick interpolation, the plain-language sentence builder, the rolling
+averages the panel reads — against the compiled `dist/`. Run `npm run build`
+first; it imports compiled output, not the TypeScript source.
 
 ## What the page does
 
@@ -76,32 +79,49 @@ not the TypeScript source.
 frame rate, so rendering time and simulation time are kept apart
 (`src/loop.ts`): each frame accumulates real elapsed time and spends it down
 in whole ticks, never a fraction of one, and interpolates a creature's drawn
-position through whatever fraction is left over (`src/interpolate.ts`). The
-tank is ticked **six times a second** by default — fast enough to read as
-alive, slow enough that a visible decision (a grazer stepping into cover, a
-hunter closing the last cell) is still on screen a couple of frames after it
-happens rather than a blur one frame wide. The instinct modules only look one
-or two cells out, so a chase is a handful of these steps, not dozens; six a
-second is paced to that, not to the 60 FPS the canvas itself targets.
-`tank_snapshot()` is called at most once per tick, never per frame.
+position, facing and speed through whatever fraction is left over
+(`src/interpolate.ts`) — a creature turns a bounded amount each tick, so its
+drawn heading eases the same way its drawn position does, never snapping the
+instant a tick resolves. The tank is ticked **three times a second** by
+default — it was six, and the first person to open the deployed page said
+six read as too quick to watch; a default that reads as "slowed down" is a
+default apologising for itself. `tank_snapshot()` is called at most once per
+tick, never per frame.
 
-**The tank.** A fixed 16×12 reef, seeded from `?seed=` in the URL (default
-`7`, the seed `regen_hashes.rs` calls "the world the page presents") so a
-reload or a shared link reproduces the same world. "New world" draws a fresh
-random seed and rewrites the URL. Drawn back to front: reef floor, food
-(denser cells greener and darker — `src/renderer.ts`'s `foodColour`), cover
-cells (`(x*3 + y*5) % 7 === 0`, computed the same way the tank does, in
-`src/cover.ts` — not in the snapshot because it does not need to be, it is a
-pure function of coordinates), then creatures.
+**The tank.** A continuous 100×75 reef (not a grid of cells), seeded from
+`?seed=` in the URL (default `7`, the seed `regen_hashes.rs` calls "the world
+the page presents") so a reload or a shared link reproduces the same world.
+"New world" draws a fresh random seed and rewrites the URL. Drawn back to
+front (`src/renderer.ts`): a water gradient and drifting light bands (screen
+space, holding still while the camera pans or zooms), kelp beds — clumps of
+swaying fronds, not circles — food patches (soft pulsing blobs, a carcass
+reading warmer and arriving with a bloom), each creature's fading trail, a
+faint sight-radius ring on every creature, a reaction line to whatever a
+creature is fleeing or hunting, the creatures themselves, a second pass of
+kelp fronds in front of any creature hidden in the weed, motes, and a
+vignette.
 
-**A creature** is its catalog colour *and* shape (`round`, `wedge`, `ring`,
-`spiral`, `src/shapes.ts`) at its catalog size, so a colour-blind visitor can
-still tell species apart. A hidden creature is drawn faint and outline-only.
-A creature that just ate, was just hunted, or just spawned gets a fading
-coloured halo for a moment (`src/renderer.ts`'s `Flash`), and a creature that
-vanished between two ticks — starved or eaten — leaves a fading ripple at
-its last cell (`Departed`) rather than disappearing without a trace: a death
-that is not visible is a death nobody connects to the hunter beside it.
+**A creature** is a body and a tail, not a glyph: an ellipse oriented along
+its `facing`, and a tail whose undulation frequency and amplitude follow its
+`speed` — a creature at rest barely moves; a fleeing one thrashes. Each
+species keeps its catalog colour and silhouette (`round`, `wedge`, `ring`,
+`spiral`, drawn per-creature in `src/renderer.ts`; `src/shapes.ts` only draws
+the legend's static swatch icon) and a soft glow in its own colour, which is
+where "luminous" comes from. A hidden creature is drawn dimmer, with kelp
+fronds passing in front of it, so it reads as *in* the weed rather than
+merely marked as hidden. A creature that just ate, was just hunted, or just
+spawned gets a fading coloured halo for a moment (`Flash`), and a creature
+that vanished between two ticks — starved or eaten — leaves a fading ripple
+at its last position (`Departed`) rather than disappearing without a trace.
+
+The sight circle and the reaction line are the two load-bearing pieces
+(`docs/look.md` says so): a creature's beliefs are its perception, and a
+line to whatever it is reacting to turns "it moved" into "it moved away from
+*that*". Exact for the selected creature (from `tank_focus`'s own
+observation); an approximation — the nearest creature of a hunting role
+within a per-role sight radius mirroring `crates/simulation/src/world.rs` —
+for everyone else, and only when the reason is worth interrupting somebody
+for (`fleeing_threat` or `hunting`).
 
 **The panel** reads tick, seed, population, births/deaths, and the
 measurements the tank exposes — decisions/second, instructions/tick,
@@ -128,10 +148,13 @@ layers, each readable on its own:
 1. **Plain language.** One sentence built only from what `tank_focus()`'s
    `observation` carried the creature that tick — the whole of what it could
    have reasoned from — plus a second sentence when the world did something
-   other than what was asked (blocked, refused, or the invocation never
-   reached a `Decision` at all). `src/sentence.ts`'s `buildSentence` is the
-   pure function this is, and it is what `test/inspector.test.mjs` spends
-   most of its lines on.
+   other than what was asked (refused, or the invocation never reached a
+   `Decision` at all). A distance is always one of four bands — "right
+   beside it" through "at the edge of sight" — never a raw number of reef
+   units, and never a compass direction: a continuous swim goes `toward` or
+   `away` from a place, not `move-north`. `src/sentence.ts`'s `buildSentence`
+   is the pure function this is, and it is what `test/inspector.test.mjs`
+   spends most of its lines on.
 2. **State.** Energy (a bar as well as a number — this world has no separate
    health, and the caption says so once), age, what it is doing, and what it
    remembers (`self.memory`: what the world did with *last* tick's intent,
@@ -152,32 +175,41 @@ than snapping, and turns itself off — reverting the camera, not the toggle —
 the moment there is nothing left to follow. **Debug** adds this decision's
 raw instruction and fuel counts to the panel and to the on-canvas ring.
 
+## The renderer is outside the determinism rule
+
+The simulation may not call a trigonometric function — two machines can
+disagree in the last bits of a `sin`, and a shared replay link is a bet that
+they do not. `src/renderer.ts` is the one place in this page allowed to: it
+computes nothing the state hash sees, so every swaying frond, drifting mote
+and undulating tail may use `Math.sin`, `performance.now()`, and randomness
+of the renderer's own seeding. None of it is allowed to feed back into a
+decision.
+
 ## What was not verified in a browser
 
 This was built and checked without ever opening one — Node has no DOM, no
 canvas, and no `requestAnimationFrame`. What Node verified: the wasm module
-instantiates and runs (via `check.mjs` and an ad hoc HTTP-served run of
-`loadTank` during development), the TypeScript compiles clean under `strict`,
-and every pure function the loop, layout and renderer are built from —
-`computeLayout`, `zoomedLayout`, `interpolateCreatures`, `departedCreatures`,
-`advance`, `alphaOf`, `isCover`, `headingAngleOf`, `radiusOf`, the rolling
-averages, `buildSentence`, `reasonWord`, `memoryWord`, `highlightedLines`,
-`easeCamera`, `pickCreature` — is exercised by `test/*.test.mjs`, including a
-200-tick run confirming every departure `departedCreatures` reports matches
-the snapshot's own death count, that `ate`, `hunted`, and `spawned` all
-actually occur and are detected, and a from-`dist/` run of `tank_focus` /
+instantiates and runs (via `check.mjs` and an ad hoc run of `loadTank` during
+development), the TypeScript compiles clean under `strict`, and every pure
+function the loop, layout and renderer are built from — `computeLayout`,
+`zoomedLayout`, `toPixel`, `interpolateCreatures`, `departedCreatures`,
+`advance`, `alphaOf`, `radiusOf`, the rolling averages, `buildSentence`,
+`band`, `foodWord`, `reactionTarget`, `reasonWord`, `memoryWord`,
+`highlightedLines`, `easeCamera`, `pickCreature` — is exercised by
+`test/*.test.mjs`, including a from-`dist/` run of `tank_focus` /
 `tank_source` against the real wasm module driving `buildSentence` and
-`highlightedLines` end to end (see the task notes for the sentences a real
-run produced — one per `reason`, plus the `refusal` and death-during-watch
-cases, all captured from an actual `Ask`, none invented).
+`highlightedLines` end to end with real captured `Ask`s, one per `reason`,
+plus the `refusal` case.
 
 What was **not** verified: that anything draws correctly on screen — the
-selection ring, the dimming, the energy bar, the highlighted source line, the
-`<details>` collapse/expand and its scroll-into-view — that the panel's DOM
-updates read cleanly, that resize/devicePixelRatio scaling looks right, that
-clicking a creature (or the reef around it) dispatches and hits what it
-should under a real pointer event, that Follow's easing looks like easing
-rather than a stutter, that the space bar and buttons work under real event
-dispatch, that 60 FPS holds in a real event loop, or that the legend's
+water, the kelp's sway, a creature's tail undulating with its speed, the
+sight circle and reaction line, the selection ring, the dimming, the energy
+bar, the highlighted source line, the `<details>` collapse/expand and its
+scroll-into-view — that the panel's DOM updates read cleanly, that
+resize/devicePixelRatio scaling looks right, that clicking a creature (or the
+water around it) dispatches and hits what it should under a real pointer
+event, that Follow's easing looks like easing rather than a stutter, that the
+space bar and buttons work under real event dispatch, that 60 FPS holds in a
+real event loop with the new per-frame drawing, or that the legend's
 per-species `<canvas>` swatches render the right shape. All of that needs an
 actual browser.

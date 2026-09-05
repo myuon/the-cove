@@ -47,12 +47,15 @@ function fail(why) {
   process.exit(1)
 }
 
-// The seed and reef `regen_hashes` computed the fixture over. They are here
-// rather than read from the file because a check that took its own parameters
-// from the thing it is checking is not a check.
+// The seed and reef `regen_hashes` computed the fixture over — `BROWSER_SEED`,
+// `BROWSER_WIDTH` and `BROWSER_HEIGHT` in `crates/simulation/src/bin/
+// regen_hashes.rs`. They are here rather than read from the file because a
+// check that took its own parameters from the thing it is checking is not a
+// check.
 const SEED = 7
-const WIDTH = 16
-const HEIGHT = 12
+// Zero means the reef's own size, which is the only place it is written.
+const WIDTH = 0
+const HEIGHT = 0
 
 const expected = (await readFile(golden, 'utf8'))
   .split('\n')
@@ -61,11 +64,29 @@ const expected = (await readFile(golden, 'utf8'))
 if (tank_open(SEED, WIDTH, HEIGHT) !== 0) fail('the tank would not open')
 let seen = JSON.parse(blob(tank_snapshot()))
 if (seen.tick !== 0) fail(`a new tank is at tick ${seen.tick}`)
+if (!(seen.reef.x > 0 && seen.reef.y > 0)) {
+  fail(`a reef of ${seen.reef.x}x${seen.reef.y}`)
+}
 if (seen.creatures.length < 8 || seen.creatures.length > 14) {
   fail(`a cast of ${seen.creatures.length}`)
 }
 if (seen.catalog.length !== 4) fail(`a catalog of ${seen.catalog.length}`)
-if (seen.food.length !== WIDTH * HEIGHT) fail(`a reef of ${seen.food.length} cells`)
+// The reef is continuous: no more cells to count, only morsels drifting in
+// patches (at least `MORSELS` in `crates/simulation/src/world.rs`, and
+// growing by one carcass per death) and a handful of kelp beds (`BEDS`,
+// fixed for the life of a world).
+if (seen.food.length < 26) fail(`only ${seen.food.length} morsels of food`)
+if (seen.kelp.length !== 5) fail(`a reef of ${seen.kelp.length} kelp beds`)
+if (
+  seen.creatures.some(
+    (c) =>
+      typeof c.facingX !== 'number' ||
+      typeof c.facingY !== 'number' ||
+      typeof c.speed !== 'number',
+  )
+) {
+  fail('a creature with no facing or speed')
+}
 
 const hashes = []
 for (let step = 0; step < expected.length; step += 1) {
@@ -89,13 +110,26 @@ for (let step = 0; step < expected.length; step += 1) {
     )
   }
 }
-if (seen.creatures.some((c) => typeof c.reason !== 'string' || c.reason === '')) {
+// A creature `result === 'spawned'` this tick has not been asked anything
+// yet — `crates/tank-wasm/src/lib.rs`'s `snapshot` writes `""` for both
+// `intent` and `reason` when nothing in `tank.last` names it, which is
+// exactly the fresh-spawn case — so it is the one creature this check does
+// not hold to having a reason.
+if (
+  seen.creatures.some(
+    (c) => c.result !== 'spawned' && (typeof c.reason !== 'string' || c.reason === ''),
+  )
+) {
   fail('a creature acted for no reason')
 }
 if (seen.failedFuel !== 0 || seen.failedFault !== 0) {
   fail(`${seen.failedFuel} fuel stops and ${seen.failedFault} faults`)
 }
-if (seen.decisions !== seen.creatures.length) {
+// Same exception as above, the other way round: `decisions` counts the
+// population `decisions()` asked *before* this tick's respawns landed, so a
+// tick that respawned a slot always asks one fewer than it now holds.
+const spawnedThisTick = seen.creatures.filter((c) => c.result === 'spawned').length
+if (seen.decisions !== seen.creatures.length - spawnedThisTick) {
   fail(`${seen.decisions} decisions for ${seen.creatures.length} creatures`)
 }
 if (seen.instructions <= 0) fail('a tick cost no instructions')

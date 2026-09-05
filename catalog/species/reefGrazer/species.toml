@@ -11,13 +11,16 @@ role = "Grazer"
 
 [traits]
 # What one starts with.
-startingEnergy = 12
-# What a step costs on top of the one energy a tick costs everybody.
-stride = 1
+startingEnergy = 30
+# Top speed, in reef units per tick.
+cruise = 1.15
+# How much of the way to a new direction this species turns in one tick.
+agility = 0.30
 # What one unit of food is worth to this species.
 forage = 6
-# The most of this species the world holds at once: one per this many cells.
-capacity = 13
+# The most of this species the world holds at once: one per this many
+# reef units.
+capacity = 337
 
 [visual]
 colour = "#5fbf8f"

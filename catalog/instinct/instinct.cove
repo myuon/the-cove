@@ -1,31 +1,27 @@
-use contract.Cell
-use contract.Heading
+use contract.Aim
+use contract.Bed
 use contract.Intent
+use contract.Morsel
 use contract.Observation
-use contract.Patch
+use contract.Point
 use contract.SelfView
 use contract.Sighting
-use contract.stepsBetween
 
 // The moves any creature could make, written once.
 //
-// Twelve species reading the same observation would otherwise each write
-// their own "which way is the food" and their own tie-break, and two that
-// broke a tie differently would make a run depend on which of them was asked
-// first. What is left in a species module after this is what that species
-// actually decides.
+// Twelve species reading the same observation would otherwise each write their
+// own "which way is the food" and their own tie-break, and two that broke a
+// tie differently would make a run depend on which of them was asked first.
+// What is left in a species module after this is what that species actually
+// decides.
 //
 // Nothing here draws a random number. A behaviour is given no generator, so
-// two creatures in the same position with the same observation answer the
-// same thing -- which is what makes a species a function rather than a
-// process.
-
-/// The cells this creature could step onto: on the grid, and empty.
-export fn open(observation: Observation) -> Array<Patch> {
-  observation.around.filter(fn(patch) {
-    !patch.outside && !patch.occupied
-  })
-}
+// two creatures in the same place with the same observation answer the same
+// thing -- which is what makes a species a function rather than a process.
+//
+// Nothing here takes a square root either, because the language has none. Every
+// comparison of distances is a comparison the host already made, or a
+// comparison of squares.
 
 /// The creatures this one is hunted by.
 export fn threats(sightings: Array<Sighting>) -> Array<Sighting> {
@@ -48,13 +44,20 @@ export fn kin(view: SelfView, sightings: Array<Sighting>) -> Array<Sighting> {
   })
 }
 
+/// The sightings no further off than `range`.
+export fn within(sightings: Array<Sighting>, range: Float) -> Array<Sighting> {
+  sightings.filter(fn(sighting) {
+    sighting.away <= range
+  })
+}
+
 /// The nearest of these sightings, and the lowest id among those tied.
 ///
 /// A fold rather than a sort: one answer is wanted and a sort would build a
 /// whole ordering to take the front of it. The comparison is strict, so the
 /// earlier element wins a tie -- and `Observation.nearby` already arrives
-/// nearest first and lowest id first, which is the order this preserves
-/// rather than a second ordering laid over it.
+/// nearest first and lowest id first, which is the order this preserves rather
+/// than a second ordering laid over it.
 export fn nearest(sightings: Array<Sighting>) -> Option<Sighting> {
   let nothing: Option<Sighting> = None
   sightings.fold(
@@ -72,101 +75,109 @@ export fn nearest(sightings: Array<Sighting>) -> Option<Sighting> {
   )
 }
 
-/// The open cell with the most food, if any of them holds any.
-export fn richest(observation: Observation) -> Option<Patch> {
-  let nothing: Option<Patch> = None
-  open(observation).filter(fn(patch) {
-    patch.food > 0
-  }).fold(initial: nothing, step: fn(best: Option<Patch>, patch: Patch) {
-    match best {
-      None => Some(patch)
-      Some(found) => if patch.food > found.food {
-        Some(patch)
-      } else {
-        Some(found)
-      }
-    }
-  })
-}
-
-/// The open cell nearest `target`, if the creature can step at all.
-export fn towards(target: Cell, observation: Observation) -> Option<Heading> {
-  let nothing: Option<Patch> = None
-  let best = open(observation).fold(
+/// The fullest mouthful in sight, and the nearest of those tied.
+export fn richest(observation: Observation) -> Option<Morsel> {
+  let nothing: Option<Morsel> = None
+  observation.food.fold(
     initial: nothing,
-    step: fn(found: Option<Patch>, patch: Patch) {
-      match found {
-        None => Some(patch)
-        Some(current) => if stepsBetween(patch.at, target) <
-          stepsBetween(current.at, target) {
-          Some(patch)
+    step: fn(best: Option<Morsel>, morsel: Morsel) {
+      match best {
+        None => Some(morsel)
+        Some(found) => if morsel.amount > found.amount ||
+          morsel.amount == found.amount && morsel.away < found.away {
+          Some(morsel)
         } else {
-          Some(current)
+          Some(found)
         }
       }
     },
   )
-  match best {
-    Some(patch) => Some(patch.heading)
-    None => None
-  }
 }
 
-/// The open cell furthest from `target`, if the creature can step at all.
-export fn away(target: Cell, observation: Observation) -> Option<Heading> {
-  let nothing: Option<Patch> = None
-  let best = open(observation).fold(
+/// The nearest bed of kelp in sight.
+export fn shelter(observation: Observation) -> Option<Bed> {
+  let nothing: Option<Bed> = None
+  observation.kelp.fold(
     initial: nothing,
-    step: fn(found: Option<Patch>, patch: Patch) {
-      match found {
-        None => Some(patch)
-        Some(current) => if stepsBetween(patch.at, target) >
-          stepsBetween(current.at, target) {
-          Some(patch)
+    step: fn(best: Option<Bed>, bed: Bed) {
+      match best {
+        None => Some(bed)
+        Some(found) => if bed.away < found.away {
+          Some(bed)
         } else {
-          Some(current)
+          Some(found)
         }
       }
     },
   )
-  match best {
-    Some(patch) => Some(patch.heading)
-    None => None
-  }
 }
 
-/// The open shelter nearest this creature, if it can see one.
-export fn shelter(observation: Observation) -> Option<Heading> {
-  let sheltered = open(observation).filter(fn(patch) {
-    patch.shelter
-  })
-  match sheltered.get(0) {
-    Some(patch) => Some(patch.heading)
-    None => None
-  }
+/// Swim towards a place, trying this hard.
+export fn toward(at: Point, effort: Float) -> Intent {
+  Intent.Toward(Aim(at: at, effort: effort))
 }
 
-/// A step chosen by nothing in particular, or a rest when there is none.
+/// Swim away from a place, trying this hard.
+export fn away(at: Point, effort: Float) -> Intent {
+  Intent.Away(Aim(at: at, effort: effort))
+}
+
+/// Eight directions, each one unit long, in the order a tie is broken in.
+///
+/// Written out rather than computed, because computing them would need an
+/// angle and the reef has no trigonometry: a direction here is a vector and
+/// never a bearing. The diagonals are one over the square root of two, which
+/// is a literal a machine reads exactly rather than a call whose last bit two
+/// machines might disagree about.
+export fn compass() -> Array<Point> {
+  [
+    Point(x: 1.0, y: 0.0),
+    Point(x: 0.7071067811865476, y: 0.7071067811865476),
+    Point(x: 0.0, y: 1.0),
+    Point(x: -0.7071067811865476, y: 0.7071067811865476),
+    Point(x: -1.0, y: 0.0),
+    Point(x: -0.7071067811865476, y: -0.7071067811865476),
+    Point(x: 0.0, y: -1.0),
+    Point(x: 0.7071067811865476, y: -0.7071067811865476),
+  ]
+}
+
+/// A direction chosen by nothing in particular.
 ///
 /// "Nothing in particular" still has to be the same nothing on every run, so
 /// it is the creature's own id and the tick that choose, and not a draw the
-/// behaviour has no generator to make.
-export fn wander(view: SelfView, observation: Observation) -> Intent {
-  let choices = open(observation)
-  if choices.isEmpty() {
-    return Intent.Rest
-  }
-  let picked = (view.id + observation.tick) % choices.length()
-  match choices.get(picked) {
-    Some(patch) => Intent.Move(patch.heading)
-    None => Intent.Rest
+/// behaviour has no generator to make. It changes slowly -- one step of the
+/// compass every sixteen ticks -- because a creature that picked a fresh
+/// direction every tick would shiver rather than wander.
+export fn drift(view: SelfView, observation: Observation) -> Point {
+  let turns = compass()
+  let picked = (view.id + observation.tick / 16) % turns.length()
+  match turns.get(picked) {
+    Some(direction) => direction
+    None => Point(x: 1.0, y: 0.0)
   }
 }
 
-/// Turns a heading into a move, and no heading into `fallback`.
-export fn stepOr(heading: Option<Heading>, fallback: Intent) -> Intent {
-  match heading {
-    Some(found) => Intent.Move(found)
-    None => fallback
-  }
+/// A place to head for when there is nothing to head for.
+///
+/// Far enough that the creature keeps going for a while rather than arriving
+/// and stopping, and kept inside the reef so that wandering never means
+/// pressing against a wall.
+export fn wander(view: SelfView, observation: Observation) -> Intent {
+  let heading = drift(view, observation)
+  toward(inside(view.at.plus(heading.scaled(20.0)), observation), 0.35)
+}
+
+/// The same place, moved inside the reef if it was not.
+///
+/// A behaviour may aim anywhere; a behaviour that aims outside spends the tick
+/// swimming into a wall. The margin keeps an aim off the edge rather than on
+/// it, because a creature pinned to a wall is a creature that has stopped
+/// being able to turn away from anything.
+export fn inside(at: Point, observation: Observation) -> Point {
+  let margin = 3.0
+  Point(
+    x: at.x.max(margin).min(observation.reef.x - margin),
+    y: at.y.max(margin).min(observation.reef.y - margin),
+  )
 }

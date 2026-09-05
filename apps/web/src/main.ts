@@ -19,9 +19,12 @@ import {
   render,
   FLASH_MS,
   DEPARTED_MS,
+  TRAIL_MS,
+  CARCASS_BLOOM_MS,
   type Flash,
   type DepartedMarker,
   type Selection,
+  type TrailPoint,
 } from "./renderer.js";
 import { drawShape, radiusOf } from "./shapes.js";
 import { RollingAverage, DecisionRate } from "./panel.js";
@@ -32,22 +35,23 @@ import { clampCamera, easeCamera, type Camera } from "./camera.js";
 import { pickCreature } from "./pick.js";
 import type { FocusSnapshot, Snapshot } from "./snapshot.js";
 
-// The reef this page presents. Fixed rather than read from the window,
-// because a shared seed has to mean a shared world: `crates/simulation/src/
-// bin/regen_hashes.rs` calls this exact width and height "the world the
-// browser check runs, which is the world the page presents", and
-// `apps/web/check.mjs` pins its hashes to it.
-const WIDTH = 16;
-const HEIGHT = 12;
+// The reef's size is the reef's, and the page is told it rather than told to
+// remember it. `tank_open` takes zero to mean "your own size", so there is one
+// number and it lives in `simulation::world::REEF_WIDTH` where it was
+// measured. A page carrying its own copy is a page holding one of the reef's
+// dimensions in a second language, which is the shape of every drift this
+// project has had -- three of them so far, and every one invisible until
+// something looked wrong on screen.
+let WIDTH = 0;
+let HEIGHT = 0;
 const DEFAULT_SEED = 7;
 
 // Three ticks a (real) second. Fast enough that the tank reads as alive
 // rather than as a slideshow, slow enough that a visible decision — a grazer
-// stepping into cover, a hunter closing the last cell — is still on screen for
-// a beat rather than a blur one frame wide. A chase here is a handful of
-// steps and not dozens, because a creature only ever sees one or two cells
-// out, so this is paced to the world and not to the 60 FPS render loop, which
-// stays separate on purpose (see `loop.ts`).
+// turning for cover, a hunter closing the last few units — is still on
+// screen for a beat rather than a blur one frame wide. This is paced to the
+// world and not to the 60 FPS render loop, which stays separate on purpose
+// (see `loop.ts`) and is what `interpolate.ts` smooths the gap with.
 //
 // It was six, and six was too quick to watch: the first person to open the
 // deployed page said so, and the honest fix is to move the base rate rather
@@ -63,6 +67,12 @@ const TICK_MS = 1000 / 3;
 const CAMERA_HALF_LIFE_MS = 200;
 const FOLLOW_ZOOM = 2;
 
+// How often a trail point is sampled, in real milliseconds. Every render
+// frame (up to 60 a second) would be far more points than the renderer ever
+// draws — it only shows the last `TRAIL_MS` of them — so this throttles
+// sampling to a rate closer to what actually ends up on screen.
+const TRAIL_SAMPLE_MS = 90;
+
 function must<T extends Element>(id: string): T {
   const el = document.getElementById(id);
   if (!el) {
@@ -72,7 +82,10 @@ function must<T extends Element>(id: string): T {
 }
 
 function flashKindOf(result: string): Flash["kind"] | null {
-  if (result.startsWith("ate-")) return "ate";
+  // `ActionResult.name()` in `catalog/contract/contract.cove`: `Ate(_)` is
+  // just `"ate"`, not `"ate-1"` — the amount taken never named itself in the
+  // word, only in the value the old grid version never carried either.
+  if (result === "ate") return "ate";
   if (result.startsWith("hunted-")) return "hunted";
   if (result === "spawned") return "spawned";
   return null;
@@ -131,6 +144,18 @@ async function main(): Promise<void> {
   let currSnapshot: Snapshot | null = null;
   let departedMarkers: DepartedMarker[] = [];
   const flashes = new Map<number, Flash>();
+  // A short fading path behind each creature (`docs/look.md`: "three or
+  // four seconds of path"). Sampled at most once every `TRAIL_SAMPLE_MS` of
+  // real time rather than every render frame — a point every frame would be
+  // sixty a second per creature, and the renderer only ever draws a few
+  // dozen of the most recent ones anyway.
+  const trails = new Map<number, TrailPoint[]>();
+  let lastTrailSampleAt = -Infinity;
+  // Which indices of `food` arrived as a carcass, and when — `food` only
+  // ever grows (`crates/simulation/src/world.rs`: "carcasses only ever add
+  // to this"), so an index beyond the previous snapshot's length is always
+  // a fresh one landing this tick, never a coincidence of reordering.
+  const carcasses = new Map<number, number>();
   const instructionsAvg = new RollingAverage();
   const fuelAvg = new RollingAverage();
   const microsAvg = new RollingAverage();
@@ -162,7 +187,8 @@ async function main(): Promise<void> {
   let camera: Camera = { x: WIDTH / 2, y: HEIGHT / 2, zoom: 1 };
   // What the last drawn frame actually put on screen, for the click handler
   // to test hits against — the same positions a visitor is looking at,
-  // including mid-tween, rather than the last snapshot's grid coordinates.
+  // including mid-tween, rather than the last snapshot's raw reef
+  // coordinates.
   let currentLayout = computeLayout(0, 0, WIDTH, HEIGHT, 16);
   let currentDrawn: readonly DrawnCreature[] = [];
 
@@ -201,11 +227,21 @@ async function main(): Promise<void> {
     // from the snapshot, which is the only thing that knows it, rather than
     // from a `4 / 3` written into a stylesheet that nothing would update when
     // the world changed size.
-    canvas.style.setProperty("--world-aspect", `${fresh.width} / ${fresh.height}`);
+    canvas.style.setProperty(
+      "--world-aspect",
+      `${fresh.reef.x} / ${fresh.reef.y}`,
+    );
+    WIDTH = fresh.reef.x;
+    HEIGHT = fresh.reef.y;
     if (!isFirst && currSnapshot) {
       const departedNow: Departed[] = departedCreatures(currSnapshot, fresh);
       for (const gone of departedNow) {
         departedMarkers.push({ ...gone, startedAt: now });
+      }
+      // `food` only ever grows; an index this snapshot has and the last one
+      // did not is a carcass landing this tick, never a reshuffle.
+      for (let index = currSnapshot.food.length; index < fresh.food.length; index += 1) {
+        carcasses.set(index, now);
       }
     }
     departedMarkers = departedMarkers.filter(
@@ -222,6 +258,11 @@ async function main(): Promise<void> {
     for (const [id, flash] of flashes) {
       if (now - flash.startedAt > FLASH_MS) {
         flashes.delete(id);
+      }
+    }
+    for (const [index, bornAt] of carcasses) {
+      if (now - bornAt > CARCASS_BLOOM_MS) {
+        carcasses.delete(index);
       }
     }
 
@@ -245,13 +286,16 @@ async function main(): Promise<void> {
   }
 
   function openWorld(nextSeed: number): void {
-    tank.open(nextSeed, WIDTH, HEIGHT);
+    tank.open(nextSeed, 0, 0);
     seed = nextSeed;
     prevSnapshot = null;
     currSnapshot = null;
     carry = 0;
     departedMarkers = [];
     flashes.clear();
+    trails.clear();
+    lastTrailSampleAt = -Infinity;
+    carcasses.clear();
     instructionsAvg.reset();
     fuelAvg.reset();
     microsAvg.reset();
@@ -636,7 +680,7 @@ async function main(): Promise<void> {
       const drawn = interpolateCreatures(prevSnapshot, currSnapshot, alpha);
 
       // The camera eases in real time (`dt`, never `dt * speed`) towards
-      // whichever creature Follow is watching, or back to the grid's own
+      // whichever creature Follow is watching, or back to the reef's own
       // centre at `zoom: 1` when it is not — the same target regardless of
       // *why* nothing is followed, whether Follow is off or the followed
       // creature just died and vanished from `drawn`.
@@ -645,7 +689,7 @@ async function main(): Promise<void> {
           ? drawn.find((c) => c.id === selectedId)
           : undefined;
       const target: Camera = followed
-        ? { x: followed.x + 0.5, y: followed.y + 0.5, zoom: FOLLOW_ZOOM }
+        ? { x: followed.x, y: followed.y, zoom: FOLLOW_ZOOM }
         : { x: WIDTH / 2, y: HEIGHT / 2, zoom: 1 };
       camera = clampCamera(
         easeCamera(camera, target, dt, CAMERA_HALF_LIFE_MS),
@@ -666,6 +710,27 @@ async function main(): Promise<void> {
       currentLayout = layout;
       currentDrawn = drawn;
 
+      // One trail point per creature at most every `TRAIL_SAMPLE_MS`, kept
+      // for `TRAIL_MS`. Dropping a dead creature's whole trail once it has
+      // nothing left worth drawing rather than filtering an ever-growing
+      // map every frame.
+      if (now - lastTrailSampleAt >= TRAIL_SAMPLE_MS) {
+        lastTrailSampleAt = now;
+        for (const creature of drawn) {
+          const points = trails.get(creature.id) ?? [];
+          points.push({ x: creature.x, y: creature.y, t: now });
+          trails.set(creature.id, points);
+        }
+        for (const [id, points] of trails) {
+          const trimmed = points.filter((p) => now - p.t <= TRAIL_MS);
+          if (trimmed.length === 0) {
+            trails.delete(id);
+          } else if (trimmed.length !== points.length) {
+            trails.set(id, trimmed);
+          }
+        }
+      }
+
       const selection: Selection = {
         id: selectedId,
         focus: lastFocus,
@@ -680,6 +745,8 @@ async function main(): Promise<void> {
         drawn,
         departedMarkers,
         flashes,
+        trails,
+        carcasses,
         now,
         selection,
       );

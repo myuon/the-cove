@@ -51,7 +51,7 @@ pub mod species;
 
 pub use clock::Stopwatch;
 pub use contract::{
-    ActionResult, Cell, Decision, Heading, Intent, Observation, Patch, Reason, Role, SelfView,
+    ActionResult, Aim, Bed, Decision, Intent, Morsel, Observation, Point, Reason, Role, SelfView,
     Sighting,
 };
 pub use resolve::{admissible, Verdict};
@@ -71,7 +71,7 @@ pub const CATALOG: &str = "catalog";
 /// comment does not. [`Species::source_hash`] is the derived half, and the two
 /// answer different questions — this one says whether a recorded world can
 /// still be read, and the hash says whether it will run the same.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// What identifies a recorded run.
 ///

@@ -16,8 +16,8 @@ fn catalog_dir() -> PathBuf {
     workspace_root().join(simulation::CATALOG)
 }
 
-const WIDTH: i64 = 24;
-const HEIGHT: i64 = 16;
+const WIDTH: f64 = simulation::world::REEF_WIDTH;
+const HEIGHT: f64 = simulation::world::REEF_HEIGHT;
 const TICKS: i64 = 300;
 
 fn run_hashes(seed: i64, roster: &Roster, catalog: &Path) -> Vec<i64> {

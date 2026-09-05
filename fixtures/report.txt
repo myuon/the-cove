@@ -1,8 +1,8 @@
 cove commit: 1c6bdc064f92b67bfe04fd2e8506dbd27b635d97
 backend: vm
-schema version: 1
+schema version: 2
 species: shyScavenger
-source hash: 480b4189c6c67872
+source hash: 15a6c74c3c53d5c4
 fuel limit: 1000000
 note: fuel and instructions agree, and are printed separately because
 they are measured differently -- instructions is a session counter's
@@ -14,8 +14,8 @@ than a stride and a completed run is charged exactly.
 
 [empty]
   decision: rest because=waiting
-  instructions: 246
-  fuel: 246
+  instructions: 99
+  fuel: 99
   verdict: allowed rest
   tape:
     enter creature.decide
@@ -25,8 +25,8 @@ than a stride and a completed run is charged exactly.
 
 [grazing]
   decision: eat because=feeding
-  instructions: 56
-  fuel: 56
+  instructions: 57
+  fuel: 57
   verdict: allowed eat
   tape:
     enter creature.decide
@@ -35,9 +35,9 @@ than a stride and a completed run is charged exactly.
     ended Success
 
 [cornered]
-  decision: hide because=fleeing_threat
-  instructions: 291
-  fuel: 291
+  decision: hide because=sheltering
+  instructions: 106
+  fuel: 106
   verdict: refused: there is no cover here
   tape:
     enter creature.decide
@@ -46,10 +46,10 @@ than a stride and a completed run is charged exactly.
     ended Success
 
 [crowded]
-  decision: rest because=crowded
-  instructions: 310
-  fuel: 310
-  verdict: allowed rest
+  decision: away because=crowded
+  instructions: 219
+  fuel: 219
+  verdict: allowed away
   tape:
     enter creature.decide
     exit creature.decide

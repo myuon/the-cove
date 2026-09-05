@@ -4,10 +4,10 @@
 // a frame, so a click is answered against exactly what the visitor is
 // looking at — including mid-tween, since it is handed `DrawnCreature`s
 // (`interpolate.ts`'s interpolated positions) rather than a snapshot's raw
-// grid coordinates. Clicking where a creature visibly is should select it
+// reef coordinates. Clicking where a creature visibly is should select it
 // even between two ticks.
 
-import { cellCentre, type Layout } from "./layout.js";
+import { toPixel, type Layout } from "./layout.js";
 import { radiusOf } from "./shapes.js";
 
 /** The one thing this file needs from a drawn creature. */
@@ -28,11 +28,11 @@ export interface PickableCatalogEntry {
  * pixels, the same coordinate space `layout` was computed in — or `null` if
  * none does.
  *
- * The hit target is at least half a cell even for the smallest catalog
- * size, rather than exactly a creature's drawn radius: a shape drawn at a
- * few pixels across is not a target anybody could reliably click, and a
- * miss here reads to a visitor as "nothing is here" rather than as "try
- * again more precisely."
+ * The hit target is at least a handful of pixels across even for the
+ * smallest catalog size and the tightest zoom, rather than exactly a
+ * creature's drawn radius: a shape drawn a few pixels across is not a target
+ * anybody could reliably click, and a miss here reads to a visitor as
+ * "nothing is here" rather than as "try again more precisely."
  */
 export function pickCreature(
   px: number,
@@ -44,12 +44,12 @@ export function pickCreature(
   let bestId: number | null = null;
   let bestDistance = Infinity;
   for (const creature of creatures) {
-    const centre = cellCentre(layout, creature.x, creature.y);
+    const centre = toPixel(layout, creature.x, creature.y);
     const dx = px - centre.px;
     const dy = py - centre.py;
     const distance = Math.sqrt(dx * dx + dy * dy);
     const size = catalog[creature.species]?.size ?? 3.5;
-    const hitRadius = Math.max(radiusOf(layout.cell, size), layout.cell * 0.5);
+    const hitRadius = Math.max(radiusOf(layout.cell, size), 14);
     if (distance <= hitRadius && distance < bestDistance) {
       bestDistance = distance;
       bestId = creature.id;

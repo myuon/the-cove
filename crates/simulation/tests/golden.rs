@@ -62,7 +62,7 @@ fn the_first_twenty_hashes_of_a_fixed_seed_match_the_committed_fixture() {
 /// has an obvious twin to update.
 mod simulation_bin_constants {
     pub const SEED: i64 = 2024;
-    pub const WIDTH: i64 = 12;
-    pub const HEIGHT: i64 = 8;
+    pub const WIDTH: f64 = simulation::world::REEF_WIDTH;
+    pub const HEIGHT: f64 = simulation::world::REEF_HEIGHT;
     pub const TICKS: i64 = 20;
 }

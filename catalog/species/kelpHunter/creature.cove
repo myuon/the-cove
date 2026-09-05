@@ -1,42 +1,45 @@
 use contract.Decision
 use contract.Intent
 use contract.Observation
-use contract.Patch
 use contract.Reason
 use contract.SelfView
 use contract.Sighting
 use instinct.nearest
 use instinct.prey
-use instinct.stepOr
-use instinct.towards
+use instinct.toward
 use instinct.wander
 
-// The kelp hunter: hunts what it can reach, and follows what it cannot.
+// The kelp hunter: takes what it can reach, and follows what it cannot.
 //
-// Prey is what it is for, and the reef is what it falls back on: a hunter
-// with nothing in sight is a hunter spending energy on walking, and a patrol
-// it cannot pay for is how one starves. So below `patrol()` it eats what is
-// underfoot if anything is, and waits if nothing is, and does not walk.
+// Prey is what it is for, and the reef's own food is what it falls back on: a
+// hunter with nothing in sight is a hunter spending energy on swimming, and a
+// patrol it cannot pay for is how one starves. So below `patrol()` it eats
+// what is in reach if anything is, and waits if nothing is, and does not swim.
+//
+// It sees further than anything else on the reef, and that is what makes it a
+// hunter rather than a large grazer: prey swims away from what it can see, so
+// something that saw no further than its prey could only ever find one by
+// swimming into it.
 
 /// The one intent this hunter answers the tick with, and why.
 export fn decide(view: SelfView, observation: Observation) -> Decision {
   let visible = prey(observation.nearby)
-  match nearest(reachable(within(visible, 1), observation)) {
+  match nearest(reachable(visible, observation)) {
     Some(caught) => return Decision(
       intent: Intent.Hunt(caught.id),
       reason: Reason.Hunting,
     )
     None => ()
   }
-  match nearest(visible) {
+  match nearest(catchable(visible)) {
     Some(seen) => return Decision(
-      intent: stepOr(towards(seen.at, observation), Intent.Rest),
+      intent: toward(seen.at, 1.0),
       reason: Reason.Hunting,
     )
     None => ()
   }
   if view.energy < patrol() {
-    if observation.here > 0 {
+    if observation.here > 0.0 {
       return Decision(intent: Intent.Eat, reason: Reason.Feeding)
     }
     return Decision(intent: Intent.Rest, reason: Reason.Waiting)
@@ -44,35 +47,30 @@ export fn decide(view: SelfView, observation: Observation) -> Decision {
   Decision(intent: wander(view, observation), reason: Reason.Exploring)
 }
 
-/// The sightings no further away than `steps`.
-fn within(sightings: Array<Sighting>, steps: Int) -> Array<Sighting> {
-  sightings.filter(fn(sighting) {
-    sighting.away <= steps
-  })
-}
-
-/// The adjacent prey a hunt would actually reach.
+/// The prey a lunge would actually reach.
 ///
-/// The world refuses a hunt into cover, and a hunter that lunged at one
-/// anyway would spend the tick finding that out. It can see which of the four
-/// cells around it is cover, so it is the hunter that decides not to.
+/// `observation.reach` is the reef's own number and not this species' guess at
+/// it. A hunter that carried its own copy would lunge at the wrong distance
+/// the first time the reef changed its mind, and nothing would say so.
 fn reachable(
   sightings: Array<Sighting>,
   observation: Observation,
 ) -> Array<Sighting> {
-  sightings.filter(fn(sighting) {
-    !covered(observation.around, sighting)
+  catchable(sightings).filter(fn(sighting) {
+    sighting.away <= observation.reach
   })
 }
 
-/// Whether the cell this sighting stands in is cover.
-fn covered(around: Array<Patch>, sighting: Sighting) -> Bool {
-  for patch in around {
-    if patch.at.x == sighting.at.x && patch.at.y == sighting.at.y {
-      return patch.shelter
-    }
-  }
-  false
+/// The prey that is not in the kelp.
+///
+/// A hidden creature is still visible -- a fish in the weed is a fish somebody
+/// can see -- and it is not catchable, because no lunge reaches into cover. A
+/// hunter that chased one anyway would spend its whole life at the edge of a
+/// kelp bed, which is what this filter is here to stop it doing.
+fn catchable(sightings: Array<Sighting>) -> Array<Sighting> {
+  sightings.filter(fn(sighting) {
+    !sighting.hidden
+  })
 }
 
 /// The energy below which a hunter stops patrolling and waits.

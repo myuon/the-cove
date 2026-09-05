@@ -28,13 +28,20 @@ pub struct SpeciesDef {
     pub role: Role,
     /// What a creature of this species starts with.
     pub starting_energy: i64,
-    /// What a step costs, on top of the upkeep every species pays.
-    pub stride: i64,
+    /// Top speed, in reef units per tick.
+    pub cruise: f64,
+    /// How much of the way to a new direction this species turns in one
+    /// tick, `0..1`.
+    ///
+    /// A hunter is fast and turns badly; a crab is slow and turns on the
+    /// spot. That asymmetry is what makes a chase watchable, so it is a
+    /// per-species number and not a reef-wide constant.
+    pub agility: f64,
     /// What one unit of food is worth to this species.
     pub forage: i64,
-    /// A divisor: the most slots a world of `cells` cells gives this species
-    /// is `cells / capacity`, which is how a cast is weighted towards the
-    /// creatures a reef holds most of.
+    /// A divisor: the most slots a reef of `cells` square units gives this
+    /// species is `cells / capacity`, which is how a cast is weighted towards
+    /// the creatures a reef holds most of.
     pub capacity: i64,
     /// How the tank draws one.
     pub visual: VisualDef,
@@ -72,7 +79,8 @@ struct RawVisual {
 struct RawTraits {
     #[serde(rename = "startingEnergy")]
     starting_energy: i64,
-    stride: i64,
+    cruise: f64,
+    agility: f64,
     forage: i64,
     capacity: i64,
 }
@@ -99,7 +107,8 @@ impl SpeciesDef {
             name: raw.name,
             role: role_of(&raw.role)?,
             starting_energy: raw.traits.starting_energy,
-            stride: raw.traits.stride,
+            cruise: raw.traits.cruise,
+            agility: raw.traits.agility,
             forage: raw.traits.forage,
             capacity: raw.traits.capacity,
             visual: VisualDef {
@@ -160,7 +169,7 @@ impl Roster {
     }
 
     /// The most creatures of this species index the world holds at once,
-    /// over a grid of `cells` cells.
+    /// over a reef of `cells` square units.
     pub fn capacity(&self, species: usize, cells: i64) -> i64 {
         cells / self.defs[species].capacity
     }

@@ -11,13 +11,18 @@ role = "Hunter"
 
 [traits]
 # What one starts with.
-startingEnergy = 18
-# What a step costs on top of the one energy a tick costs everybody.
-stride = 1
+startingEnergy = 34
+# Top speed, in reef units per tick.
+cruise = 1.6
+# How much of the way to a new direction this species turns in one tick.
+# Low: a hunter is fast and turns badly, which is what makes a chase
+# watchable rather than a foregone conclusion.
+agility = 0.22
 # What one unit of food is worth to this species.
 forage = 4
-# The most of this species the world holds at once: one per this many cells.
-capacity = 48
+# The most of this species the world holds at once: one per this many
+# reef units.
+capacity = 675
 
 [visual]
 colour = "#d4553c"

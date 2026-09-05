@@ -1,11 +1,13 @@
-//! Cover is the one place a hunt cannot reach, and hiding is the one thing a
-//! creature can do that removes it from every other creature's `nearby` --
-//! not just from view, but from what a step can be blocked by. Two separate
-//! claims, checked separately.
+//! Cover is the one place a hunt cannot reach, and a hidden creature is
+//! visible but uncatchable — not invisible. Two separate claims, checked
+//! separately, and the second one is the opposite of what the grid world's
+//! own cover used to mean: `contract.cove`'s own doc says a hidden creature
+//! stays in `nearby`, because `kelpHunter` relies on being able to see one it
+//! cannot reach.
 
 use simulation::{
-    observe, resolve, ActionResult, Ask, Cell, Creature, Decision, Intent, Reason, Role, Roster,
-    SpeciesDef, World,
+    observe, resolve, ActionResult, Ask, Decision, Intent, Point, Reason, Role, Roster, SpeciesDef,
+    World,
 };
 
 fn roster_of(hunter_role: Role, prey_role: Role) -> Roster {
@@ -14,7 +16,8 @@ fn roster_of(hunter_role: Role, prey_role: Role) -> Roster {
         name: id.to_string(),
         role,
         starting_energy: 20,
-        stride: 1,
+        cruise: 1.0,
+        agility: 0.3,
         forage: 5,
         capacity: 1_000_000,
         visual: simulation::catalog::VisualDef {
@@ -28,13 +31,13 @@ fn roster_of(hunter_role: Role, prey_role: Role) -> Roster {
     }
 }
 
-fn world_with(creatures: Vec<Creature>) -> World {
+fn world_with(creatures: Vec<simulation::Creature>) -> World {
     World {
         tick: 0,
         seed: 1,
-        width: 10,
-        height: 10,
-        food: vec![0; 100],
+        reef: Point::new(100.0, 75.0),
+        food: Vec::new(),
+        kelp: Vec::new(),
         creatures,
         cast: Vec::new(),
         pending: Vec::new(),
@@ -45,34 +48,29 @@ fn world_with(creatures: Vec<Creature>) -> World {
     }
 }
 
-fn spawned(id: i64, species: usize, at: Cell, hidden: bool) -> Creature {
-    Creature {
+fn spawned(id: i64, species: usize, at: Point, hidden: bool) -> simulation::Creature {
+    simulation::Creature {
         id,
         species,
         at,
+        facing: Point::new(1.0, 0.0),
+        speed: 0.0,
         energy: 20,
-        hidden,
         born: 0,
+        hidden,
         last: ActionResult::Spawned,
     }
 }
 
-// `(0, 0)` is a thicket: `(0*3 + 0*5) % 7 == 0`. A hunter standing next to
-// it, hunting the prey that stands in it, is refused -- if cover did not
-// stop a hunt, the reference's own comment about thickets ("a run with
-// nowhere safe ends with the predators eating everything and then starving
-// in an empty world... it did, before this was here") would be describing
-// this port too.
+// A hunter within reach of prey that is hidden is refused, naming the kelp --
+// if hiding did not stop a hunt, the module doc's claim that "no lunge
+// reaches into kelp" would be describing a species this port did not honour.
 #[test]
-fn a_hunt_into_cover_is_refused() {
-    assert!(
-        simulation::is_shelter(Cell { x: 0, y: 0 }),
-        "test setup assumes (0,0) is a thicket"
-    );
+fn a_hunt_of_a_hidden_creature_is_refused() {
     let roster = roster_of(Role::Hunter, Role::Grazer);
     let world = world_with(vec![
-        spawned(1, 0, Cell { x: 1, y: 0 }, false), // the hunter
-        spawned(2, 1, Cell { x: 0, y: 0 }, false), // the prey, in cover
+        spawned(1, 0, Point::new(1.0, 0.0), false), // the hunter
+        spawned(2, 1, Point::new(0.0, 0.0), true),  // the prey, hidden in kelp
     ]);
     let asks = vec![
         Ask::of(
@@ -100,13 +98,13 @@ fn a_hunt_into_cover_is_refused() {
     match &hunt.result {
         ActionResult::Refused(why) => {
             assert!(
-                why.contains("thicket"),
-                "expected the refusal to name the thicket, got: {why}"
+                why.contains("hidden"),
+                "expected the refusal to name the hiding, got: {why}"
             );
         }
-        other => panic!("expected the hunt into cover to be refused, got {other:?}"),
+        other => panic!("expected the hunt of a hidden creature to be refused, got {other:?}"),
     }
-    // The prey survives the tick unharmed: cover is not merely a worse odds,
+    // The prey survives the tick unharmed: cover is not merely worse odds,
     // it is a hunt that never happens.
     let prey_after = turn
         .world
@@ -120,35 +118,24 @@ fn a_hunt_into_cover_is_refused() {
     );
 }
 
-// A creature that hid does not appear in another's `nearby`, even though it
-// is standing well within sight range -- and `observe` is what a species'
-// own `decide` is shown, so if this ever failed a hunter would be able to
-// see a creature the world is supposed to be treating as gone.
+// A hidden creature still appears in another's `nearby` -- it is visible and
+// uncatchable, which is deliberate: `kelpHunter` follows what it can see even
+// when it cannot reach it, so if this ever started filtering hidden
+// creatures out, a hunter would lose track of prey the moment it ducked into
+// kelp instead of merely losing its lunge.
 #[test]
-fn a_hidden_creature_is_not_visible_in_anyone_elses_nearby() {
+fn a_hidden_creature_still_appears_in_anyones_nearby() {
     let roster = roster_of(Role::Hunter, Role::Grazer);
     let world = world_with(vec![
-        spawned(1, 0, Cell { x: 1, y: 0 }, false),
-        spawned(2, 1, Cell { x: 0, y: 0 }, true), // hidden, one step west
+        spawned(1, 0, Point::new(1.0, 0.0), false),
+        spawned(2, 1, Point::new(0.0, 0.0), true), // hidden, one unit away
     ]);
 
     let observation = observe(&world, 1, &roster).expect("creature 1 is alive");
-    assert!(
-        observation.nearby.iter().all(|s| s.id != 2),
-        "the hidden creature should not appear in creature 1's nearby: {:?}",
-        observation.nearby
-    );
-
-    // The cell the hidden creature stands on also reads as unoccupied in
-    // `around`, which is what lets a step into it still be blocked at
-    // resolution without the observation lying about who is there.
-    let patch_at_hidden_cell = observation
-        .around
+    let seen = observation
+        .nearby
         .iter()
-        .find(|p| p.at == Cell { x: 0, y: 0 })
-        .expect("the west patch is the cell the hidden creature stands on");
-    assert!(
-        !patch_at_hidden_cell.occupied,
-        "the patch over a hidden creature should read unoccupied"
-    );
+        .find(|s| s.id == 2)
+        .expect("the hidden creature is still in nearby");
+    assert!(seen.hidden, "the sighting should say it is hidden");
 }

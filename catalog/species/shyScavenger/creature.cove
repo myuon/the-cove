@@ -1,70 +1,58 @@
 use contract.ActionResult
-use contract.Cell
 use contract.Decision
 use contract.Intent
 use contract.Observation
 use contract.Reason
 use contract.SelfView
+use contract.Sighting
 use instinct.away
 use instinct.nearest
 use instinct.richest
 use instinct.shelter
-use instinct.stepOr
 use instinct.threats
+use instinct.toward
 use instinct.wander
 
 // The shy scavenger: hides first, eats second, and waits for the rest.
 //
-// It is the species the world's refusals are visible through. Cornered by a
-// hunter, with no thicket beside it and nowhere left to step, it hides where
-// it stands -- and a cell that is not a thicket is not one to hide in, so the
-// world refuses the intent and the scavenger loses the tick. That is
-// deliberate: a behaviour that is wrong about the world costs itself a turn,
-// and the tick goes on around it.
+// It is the species the reef's refusals are visible through. Frightened, with
+// no kelp in sight, it asks to hide where it is floating -- and open water is
+// not cover, so the reef refuses the intent and the scavenger loses the tick.
+// That is deliberate: a behaviour that is wrong about the reef costs itself a
+// turn, and the tick goes on around it.
 //
-// It costs itself that turn once. `SelfView.last` carries what the world did
-// with the previous intent, so a scavenger that was refused a hide does not
-// ask for the same hide again -- it steps instead, and if it cannot step it
-// rests. That is the one place in this species where the contract's answer
-// back from the host changes what it does, and it is here because a creature
-// that cannot be told it was wrong is a creature that is wrong for as long as
-// it lives.
+// It costs itself that turn once. `SelfView.last` carries what the reef did
+// with the previous intent, so a scavenger refused a hide does not ask for the
+// same hide again -- it swims instead. That is the one place in this species
+// where the reef's answer back changes what it does, and it is here because a
+// creature that cannot be told it was wrong is a creature that is wrong for as
+// long as it lives.
 //
-// What it is not is idle. It walks for nothing, it smells food it cannot
-// see, and a carcass is worth more than a cell of grass -- but waiting where
-// nothing is going to die is how a scavenger starves, so being hungry is
-// what makes it go looking.
+// What it is not is idle. It swims for almost nothing, so waiting is cheap --
+// but waiting where nothing is going to die is how a scavenger starves, and
+// being hungry is what makes it go looking.
 
 /// The one intent this scavenger answers the tick with, and why.
 export fn decide(view: SelfView, observation: Observation) -> Decision {
   match nearest(threats(observation.nearby)) {
-    Some(hunter) => return flee(view, hunter.at, observation)
+    Some(hunter) => return flee(view, hunter, observation)
     None => ()
   }
-  if observation.here > 0 && view.energy < full() {
+  if observation.here > 0.0 && view.energy < full() {
     return Decision(intent: Intent.Eat, reason: Reason.Feeding)
   }
   match nearest(observation.nearby) {
-    Some(crowd) => if crowd.away < 2 && view.energy >= searching() {
+    Some(crowd) => if crowd.away < crowding() && view.energy >= searching() {
       return Decision(
-        intent: stepOr(away(crowd.at, observation), Intent.Rest),
+        intent: away(crowd.at, 0.45),
         reason: Reason.Crowded,
       )
     }
     None => ()
   }
-  if view.energy < full() {
-    match observation.scent {
-      Some(heading) => return Decision(
-        intent: Intent.Move(heading),
-        reason: Reason.SeekingFood,
-      )
-      None => ()
-    }
-  }
   match richest(observation) {
-    Some(patch) => Decision(
-      intent: Intent.Move(patch.heading),
+    Some(morsel) => Decision(
+      intent: toward(morsel.at, 0.5),
       reason: Reason.SeekingFood,
     )
     None => if view.energy < searching() {
@@ -75,11 +63,50 @@ export fn decide(view: SelfView, observation: Observation) -> Decision {
   }
 }
 
+/// What to do about a hunter that has been seen.
+///
+/// Cover is hidden in and cover in sight is swum to. A scavenger with neither
+/// hides where it is floating -- unless the reef refused exactly that last
+/// tick, in which case it does not ask twice and swims instead.
+fn flee(
+  view: SelfView,
+  hunter: Sighting,
+  observation: Observation,
+) -> Decision {
+  if observation.sheltered {
+    return Decision(intent: Intent.Hide, reason: Reason.Sheltering)
+  }
+  match shelter(observation) {
+    Some(bed) => Decision(intent: toward(bed.at, 1.0), reason: Reason.Sheltering)
+    None => lastResort(view, hunter)
+  }
+}
+
+/// What is left when there is no cover anywhere in sight.
+///
+/// Hiding in open water, once. The reef refuses that, and `view.last` is how
+/// the scavenger finds out; asked again in the same empty water it swims away
+/// instead, which is refused by nothing and costs the same tick.
+fn lastResort(view: SelfView, hunter: Sighting) -> Decision {
+  match view.last {
+    ActionResult.Refused(_) => Decision(
+      intent: away(hunter.at, 1.0),
+      reason: Reason.FleeingThreat,
+    )
+    _ => Decision(intent: Intent.Hide, reason: Reason.Sheltering)
+  }
+}
+
+/// How close another creature has to be before a scavenger drifts off.
+fn crowding() -> Float {
+  7.0
+}
+
 /// The energy below which a scavenger stops waiting and goes looking.
 ///
-/// Waiting is what a scavenger does, and waiting where nothing is going to
-/// die is how one starves. This is the line between the two, and a scavenger
-/// that did not have it sat still until it was dead -- which the run said
+/// Waiting is what a scavenger does, and waiting where nothing is going to die
+/// is how one starves. This is the line between the two, and a scavenger that
+/// did not have it floated still until it was dead -- which the run said
 /// plainly, and which reads in the code as a `Rest` that looks perfectly
 /// reasonable.
 fn searching() -> Int {
@@ -89,39 +116,4 @@ fn searching() -> Int {
 /// The energy past which a scavenger stops eating and waits.
 fn full() -> Int {
   30
-}
-
-/// What to do about a hunter that is already this close.
-///
-/// A shelter is hidden in and a shelter in sight is walked to. A scavenger
-/// with neither, and nowhere left to step, hides where it stands -- unless
-/// the world refused exactly that last tick, in which case it does not ask
-/// twice.
-fn flee(view: SelfView, threat: Cell, observation: Observation) -> Decision {
-  if observation.shelter {
-    return Decision(intent: Intent.Hide, reason: Reason.Sheltering)
-  }
-  match shelter(observation) {
-    Some(heading) => Decision(
-      intent: Intent.Move(heading),
-      reason: Reason.Sheltering,
-    )
-    None => Decision(
-      intent: stepOr(away(threat, observation), lastResort(view)),
-      reason: Reason.FleeingThreat,
-    )
-  }
-}
-
-/// What is left when there is nowhere to step and nowhere to hide.
-///
-/// Hiding where it stands, once. The world refuses that in a cell that is not
-/// a shelter, and `view.last` is how the scavenger finds out; asked again in
-/// the same corner it rests instead, which is refused by nothing and costs
-/// the same tick.
-fn lastResort(view: SelfView) -> Intent {
-  match view.last {
-    ActionResult.Refused(_) => Intent.Rest
-    _ => Intent.Hide
-  }
 }

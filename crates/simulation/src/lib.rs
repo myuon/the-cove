@@ -28,16 +28,16 @@ mod world_ext;
 pub use catalog::{Roster, SpeciesDef, SPECIES_IDS};
 pub use cove_runtime::Limits;
 pub use creature_host::{
-    ActionResult, Cell, Decision, Failure, Habitat, Heading, Intent, Lowering, Observation, Patch,
-    Reason, Role, SelfView, Session, Sighting, Species, Stopped,
+    ActionResult, Aim, Decision, Failure, Habitat, Intent, Lowering, Observation, Point, Reason,
+    Role, SelfView, Session, Sighting, Species, Stopped,
 };
 pub use generator::{roll, Roll};
 pub use metrics::{advance_metered, TickMetrics};
 pub use world::{
-    advance, bounty, cell_index, census, creature_named, decisions, food_at, hash, index_by_id,
-    inside, is_shelter, new_world, resolve, sight_range, smells, sprouts, steps_between, tick, Ask,
-    Census, Creature, CreatureOutcome, DecisionCost, Turn, World, CARCASS, HEADINGS, MAX_ENERGY,
-    MAX_FOOD, SIGHT_LIMIT, STRIKE, UPKEEP,
+    advance, bounty, census, creature_named, decisions, hash, index_by_id, new_world, resolve,
+    sight_range, tick, Ask, Bed, Census, Creature, CreatureOutcome, DecisionCost, Morsel, Turn,
+    World, ACCEL, BEDS, BITE, CARCASS, CARCASS_RADIUS, CAST_MAX, CAST_MIN, FOOD_LIMIT, KELP_LIMIT,
+    MAX_ENERGY, MAX_MORSEL, MORSELS, MOVE_COST, NEARBY_LIMIT, REACH, RESPAWN_DELAY, STRIKE, UPKEEP,
 };
 pub use world_ext::{observe, view_of};
 

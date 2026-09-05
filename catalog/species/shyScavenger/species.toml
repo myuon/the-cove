@@ -11,13 +11,16 @@ role = "Scavenger"
 
 [traits]
 # What one starts with.
-startingEnergy = 14
-# What a step costs on top of the one energy a tick costs everybody.
-stride = 0
+startingEnergy = 30
+# Top speed, in reef units per tick.
+cruise = 0.95
+# How much of the way to a new direction this species turns in one tick.
+agility = 0.35
 # What one unit of food is worth to this species.
 forage = 5
-# The most of this species the world holds at once: one per this many cells.
-capacity = 14
+# The most of this species the world holds at once: one per this many
+# reef units.
+capacity = 450
 
 [visual]
 colour = "#8c7ab8"

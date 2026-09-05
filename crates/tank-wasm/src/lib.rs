@@ -180,6 +180,12 @@ fn fail(message: impl Into<String>) -> i32 {
 /// Answers `0`, or `-1` with [`tank_error`] holding why. Re-opening replaces
 /// whatever was there and reuses the compiled catalog.
 ///
+/// A zero width or height means the reef's own size, and that is what a page
+/// should pass. The reef is sixty by forty-five and the number lives in
+/// `simulation::world`, where it was measured; a page that wrote its own copy
+/// would be a page holding one of the reef's dimensions in a second language,
+/// which is the shape of every drift this project has had.
+///
 /// # Safety
 ///
 /// None required of the caller: this takes no pointers.
@@ -189,10 +195,11 @@ pub extern "C" fn tank_open(seed: u32, width: u32, height: u32) -> i32 {
         Ok(ready) => ready,
         Err(why) => return fail(why),
     };
+    let reef = |asked: u32, own: f64| if asked == 0 { own } else { f64::from(asked) };
     let world = new_world(
         i64::from(seed),
-        i64::from(width),
-        i64::from(height),
+        reef(width, simulation::world::REEF_WIDTH),
+        reef(height, simulation::world::REEF_HEIGHT),
         &roster,
     );
     TANK.with(|slot| {
@@ -366,10 +373,10 @@ fn snapshot(tank: &Tank) -> String {
     let mut out = String::with_capacity(4096);
     out.push('{');
     out.push_str(&format!(
-        "\"tick\":{},\"width\":{},\"height\":{},\"hash\":{},",
+        "\"tick\":{},\"reef\":{{\"x\":{},\"y\":{}}},\"hash\":{},",
         world.tick,
-        world.width,
-        world.height,
+        fnum(world.reef.x),
+        fnum(world.reef.y),
         simulation::world::hash(world)
     ));
     // The world's own constants, because a page that wrote its own copy of one
@@ -421,11 +428,31 @@ fn snapshot(tank: &Tank) -> String {
     out.push_str("],");
 
     out.push_str("\"food\":[");
-    for (at, level) in world.food.iter().enumerate() {
+    for (at, morsel) in world.food.iter().enumerate() {
         if at > 0 {
             out.push(',');
         }
-        out.push_str(&level.to_string());
+        out.push_str(&format!(
+            "{{\"x\":{},\"y\":{},\"amount\":{},\"radius\":{}}}",
+            fnum(morsel.at.x),
+            fnum(morsel.at.y),
+            fnum(morsel.amount),
+            fnum(morsel.radius)
+        ));
+    }
+    out.push_str("],");
+
+    out.push_str("\"kelp\":[");
+    for (at, bed) in world.kelp.iter().enumerate() {
+        if at > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "{{\"x\":{},\"y\":{},\"radius\":{}}}",
+            fnum(bed.at.x),
+            fnum(bed.at.y),
+            fnum(bed.radius)
+        ));
     }
     out.push_str("],");
 
@@ -436,11 +463,15 @@ fn snapshot(tank: &Tank) -> String {
         }
         let said = tank.last.iter().find(|o| o.id == creature.id);
         out.push_str(&format!(
-            "{{\"id\":{},\"species\":{},\"x\":{},\"y\":{},\"energy\":{},\"age\":{},\"hidden\":{},",
+            "{{\"id\":{},\"species\":{},\"x\":{},\"y\":{},\
+\"facingX\":{},\"facingY\":{},\"speed\":{},\"energy\":{},\"age\":{},\"hidden\":{},",
             creature.id,
             creature.species,
-            creature.at.x,
-            creature.at.y,
+            fnum(creature.at.x),
+            fnum(creature.at.y),
+            fnum(creature.facing.x),
+            fnum(creature.facing.y),
+            fnum(creature.speed),
             creature.energy,
             world.tick - creature.born,
             creature.hidden
@@ -542,41 +573,56 @@ fn focus(tank: &Tank, ask: &Ask) -> String {
 
     let knew = &ask.asked.view;
     out.push_str(&format!(
-        "\"self\":{{\"energy\":{},\"age\":{},\"hidden\":{},\"role\":{},\"memory\":{}}},",
+        "\"self\":{{\"energy\":{},\"age\":{},\"hidden\":{},\"role\":{},\"memory\":{},\
+\"facingX\":{},\"facingY\":{},\"speed\":{}}},",
         knew.energy,
         knew.age,
         knew.hidden,
         quote(&format!("{:?}", knew.role).to_lowercase()),
         // The only thing a creature carries from one tick to the next, and so
         // the whole of what one in this world remembers.
-        quote(&knew.last.name())
+        quote(&knew.last.name()),
+        fnum(knew.facing.x),
+        fnum(knew.facing.y),
+        fnum(knew.speed)
     ));
 
     let seen = &ask.asked.observation;
     out.push_str(&format!(
-        "\"observation\":{{\"here\":{},\"shelter\":{},\"scent\":{},",
-        seen.here,
-        seen.shelter,
-        match seen.scent {
-            Some(heading) => quote(heading.name()),
-            None => "null".to_string(),
-        }
+        "\"observation\":{{\"reef\":{{\"x\":{},\"y\":{}}},\"sight\":{},\"reach\":{},\
+\"here\":{},\"sheltered\":{},",
+        fnum(seen.reef.x),
+        fnum(seen.reef.y),
+        fnum(seen.sight),
+        fnum(seen.reach),
+        fnum(seen.here),
+        seen.sheltered
     ));
-    out.push_str("\"around\":[");
-    for (at, patch) in seen.around.iter().enumerate() {
+    out.push_str("\"food\":[");
+    for (at, morsel) in seen.food.iter().enumerate() {
         if at > 0 {
             out.push(',');
         }
         out.push_str(&format!(
-            "{{\"heading\":{},\"x\":{},\"y\":{},\"food\":{},\"shelter\":{},\
-\"outside\":{},\"occupied\":{}}}",
-            quote(patch.heading.name()),
-            patch.at.x,
-            patch.at.y,
-            patch.food,
-            patch.shelter,
-            patch.outside,
-            patch.occupied
+            "{{\"x\":{},\"y\":{},\"amount\":{},\"radius\":{},\"away\":{}}}",
+            fnum(morsel.at.x),
+            fnum(morsel.at.y),
+            fnum(morsel.amount),
+            fnum(morsel.radius),
+            fnum(morsel.away)
+        ));
+    }
+    out.push_str("],\"kelp\":[");
+    for (at, bed) in seen.kelp.iter().enumerate() {
+        if at > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "{{\"x\":{},\"y\":{},\"radius\":{},\"away\":{}}}",
+            fnum(bed.at.x),
+            fnum(bed.at.y),
+            fnum(bed.radius),
+            fnum(bed.away)
         ));
     }
     out.push_str("],\"nearby\":[");
@@ -586,13 +632,15 @@ fn focus(tank: &Tank, ask: &Ask) -> String {
         }
         out.push_str(&format!(
             "{{\"id\":{},\"species\":{},\"role\":{},\"x\":{},\"y\":{},\"away\":{},\
-\"hidden\":{}}}",
+\"facingX\":{},\"facingY\":{},\"hidden\":{}}}",
             sighting.id,
             sighting.species,
             quote(&format!("{:?}", sighting.role).to_lowercase()),
-            sighting.at.x,
-            sighting.at.y,
-            sighting.away,
+            fnum(sighting.at.x),
+            fnum(sighting.at.y),
+            fnum(sighting.away),
+            fnum(sighting.facing.x),
+            fnum(sighting.facing.y),
             sighting.hidden
         ));
     }
@@ -607,6 +655,24 @@ fn focus(tank: &Tank, ask: &Ask) -> String {
     }
     out.push_str("]}");
     out
+}
+
+/// One JSON number, from an `f64`.
+///
+/// JSON has no spelling for `NaN` or an infinity, and nothing in an ordinary
+/// run produces either — but the reef's own arithmetic is `+ - * /` and
+/// `sqrt` and not a bounds check, so a caller reading this is told rather
+/// than handed a blob `JSON.parse` refuses.
+fn fnum(value: f64) -> String {
+    if value.is_finite() {
+        format!("{value}")
+    } else if value.is_nan() {
+        "null".to_string()
+    } else if value.is_sign_positive() {
+        "1e999".to_string()
+    } else {
+        "-1e999".to_string()
+    }
 }
 
 /// One JSON string. Every string this module writes is an identifier or a

@@ -8,46 +8,48 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { computeLayout, cellCentre } from "../dist/layout.js";
-import { isCover } from "../dist/cover.js";
+import { computeLayout, toPixel, zoomedLayout } from "../dist/layout.js";
 import { advance, alphaOf } from "../dist/loop.js";
 import { interpolateCreatures, departedCreatures } from "../dist/interpolate.js";
 import { RollingAverage, DecisionRate } from "../dist/panel.js";
-import { headingAngleOf, radiusOf } from "../dist/shapes.js";
+import { radiusOf } from "../dist/shapes.js";
 
-test("computeLayout fits a wide grid into a tall canvas without stretching", () => {
-  const layout = computeLayout(1000, 400, 16, 12, 0);
-  // 1000/16 = 62.5, 400/12 = 33.3 -- the shorter side wins.
-  assert.equal(layout.cell, 33);
+test("computeLayout fits a wide reef into a tall canvas without stretching", () => {
+  const layout = computeLayout(1000, 400, 100, 75, 0);
+  // 1000/100 = 10, 400/75 = 5.33 -- the shorter side wins.
+  assert.ok(Math.abs(layout.cell - 400 / 75) < 1e-9);
   assert.ok(layout.offsetY >= 0 && layout.offsetY < layout.cell);
-  assert.equal(layout.offsetX, (1000 - 33 * 16) / 2);
+  assert.ok(Math.abs(layout.offsetX - (1000 - layout.cell * 100) / 2) < 1e-9);
 });
 
-test("computeLayout centres a grid smaller than its margin-adjusted canvas", () => {
-  const layout = computeLayout(100, 100, 16, 12, 10);
-  assert.equal(layout.cell, 5);
+test("computeLayout centres a reef smaller than its margin-adjusted canvas", () => {
+  const layout = computeLayout(220, 220, 100, 75, 10);
+  assert.ok(Math.abs(layout.cell - 2) < 1e-9);
   assert.equal(layout.offsetX, 10);
-  assert.equal(layout.offsetY, 20);
+  assert.ok(Math.abs(layout.offsetY - (220 - 2 * 75) / 2) < 1e-9);
 });
 
-test("cellCentre sits in the middle of a cell, not its corner", () => {
+test("computeLayout never rounds its scale to a whole pixel", () => {
+  // The reef is continuous now: a scale that is not an integer number of
+  // pixels per unit must not be floored away, or every position on the
+  // reef quantises to the same handful of pixel columns.
+  const layout = computeLayout(333, 333, 100, 75, 0);
+  assert.ok(layout.cell > 3 && layout.cell < 4.5);
+  assert.notEqual(layout.cell, Math.floor(layout.cell));
+});
+
+test("toPixel maps a reef position straight through the scale and offset, with no cell-centring", () => {
   const layout = { cell: 10, offsetX: 0, offsetY: 0 };
-  assert.deepEqual(cellCentre(layout, 0, 0), { px: 5, py: 5 });
-  assert.deepEqual(cellCentre(layout, 2, 3), { px: 25, py: 35 });
+  assert.deepEqual(toPixel(layout, 0, 0), { px: 0, py: 0 });
+  assert.deepEqual(toPixel(layout, 2.5, 3.25), { px: 25, py: 32.5 });
 });
 
-test("isCover matches the tank's own rule and is not just true everywhere", () => {
-  assert.equal(isCover(0, 0), true); // (0*3+0*5) % 7 === 0
-  assert.equal(isCover(1, 0), false); // 3 % 7 !== 0
-  assert.equal(isCover(4, 1), false); // 17 % 7 !== 0
-  assert.equal(isCover(7, 0), true); // 21 % 7 === 0
-  let coverCount = 0;
-  for (let y = 0; y < 12; y += 1) {
-    for (let x = 0; x < 16; x += 1) {
-      if (isCover(x, y)) coverCount += 1;
-    }
-  }
-  assert.ok(coverCount > 0 && coverCount < 16 * 12, `${coverCount} cover cells`);
+test("zoomedLayout at zoom 1 centred on the reef reproduces the base layout", () => {
+  const base = computeLayout(800, 600, 100, 75, 16);
+  const zoomed = zoomedLayout(base, 800, 600, 1, 50, 37.5);
+  assert.ok(Math.abs(zoomed.cell - base.cell) < 1e-9);
+  assert.ok(Math.abs(zoomed.offsetX - base.offsetX) < 1e-9);
+  assert.ok(Math.abs(zoomed.offsetY - base.offsetY) < 1e-9);
 });
 
 test("advance turns elapsed time into whole ticks and keeps the remainder", () => {
@@ -85,6 +87,9 @@ function creature(id, x, y, extra = {}) {
     species: 0,
     x,
     y,
+    facingX: 1,
+    facingY: 0,
+    speed: 0,
     energy: 10,
     age: 1,
     hidden: false,
@@ -126,6 +131,31 @@ test("interpolateCreatures clamps alpha outside [0, 1]", () => {
   assert.equal(interpolateCreatures(prev, curr, -5)[0].x, 0);
 });
 
+test("interpolateCreatures eases a turning facing rather than snapping it", () => {
+  const prev = { creatures: [creature(1, 0, 0, { facingX: 1, facingY: 0 })] };
+  const curr = { creatures: [creature(1, 0, 0, { facingX: 0, facingY: 1 })] };
+  const half = interpolateCreatures(prev, curr, 0.5)[0];
+  // Halfway between due east and due south, re-normalised to a unit vector.
+  assert.ok(Math.abs(half.facingX - Math.SQRT1_2) < 1e-9);
+  assert.ok(Math.abs(half.facingY - Math.SQRT1_2) < 1e-9);
+  const length = Math.hypot(half.facingX, half.facingY);
+  assert.ok(Math.abs(length - 1) < 1e-9);
+});
+
+test("interpolateCreatures falls back to the current facing on a near-total reversal", () => {
+  const prev = { creatures: [creature(1, 0, 0, { facingX: 1, facingY: 0 })] };
+  const curr = { creatures: [creature(1, 0, 0, { facingX: -1, facingY: 0 })] };
+  const half = interpolateCreatures(prev, curr, 0.5)[0];
+  assert.equal(half.facingX, -1);
+  assert.equal(half.facingY, 0);
+});
+
+test("interpolateCreatures eases speed the same way it eases position", () => {
+  const prev = { creatures: [creature(1, 0, 0, { speed: 0 })] };
+  const curr = { creatures: [creature(1, 0, 0, { speed: 1.4 })] };
+  assert.ok(Math.abs(interpolateCreatures(prev, curr, 0.5)[0].speed - 0.7) < 1e-9);
+});
+
 test("departedCreatures reports an id that vanished, at its last position", () => {
   const prev = { creatures: [creature(1, 1, 1), creature(2, 9, 9)] };
   const curr = { creatures: [creature(1, 1, 1)] };
@@ -158,15 +188,7 @@ test("DecisionRate divides smoothed decisions by smoothed milliseconds", () => {
   assert.equal(rate.perSecond(), 0);
 });
 
-test("headingAngleOf reads the trailing direction word or answers null", () => {
-  assert.equal(headingAngleOf("moved-north"), -Math.PI / 2);
-  assert.equal(headingAngleOf("blocked-east"), 0);
-  assert.equal(headingAngleOf("move-west"), Math.PI);
-  assert.equal(headingAngleOf("eat"), null);
-  assert.equal(headingAngleOf("hunt-7"), null);
-});
-
-test("radiusOf grows with catalog size but stays a fraction of the cell", () => {
+test("radiusOf grows with catalog size but stays a fraction of the swatch", () => {
   const small = radiusOf(40, 3);
   const large = radiusOf(40, 4);
   assert.ok(small < large);

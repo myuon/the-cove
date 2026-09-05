@@ -6,10 +6,10 @@
 //! like one species, and the exit criterion of this slice is a visitor who
 //! can tell three behaviours apart.
 //!
-//! This is what `cargo run -p simulation --bin sweep` measures across four
-//! grid sizes and six seeds. The assertions below are the floor of what it
-//! measured, not the numbers it measured: a change that makes the reef busier
-//! should not fail a test, and a change that empties it should.
+//! This is what `cargo run -p simulation --bin sweep` measures over the
+//! reef's canonical size and six seeds. The assertions below are the floor of
+//! what it measured, not the numbers it measured: a change that makes the
+//! reef busier should not fail a test, and a change that empties it should.
 
 use std::path::{Path, PathBuf};
 
@@ -24,11 +24,9 @@ fn catalog_dir() -> PathBuf {
         .join(simulation::CATALOG)
 }
 
-/// The reef a world is presented on. Sixteen by twelve was chosen by running
-/// `sweep`: it is the smallest that is not cramped and the largest at which a
-/// grazer still meets a hunter often enough for a visitor to see one flee.
-const WIDTH: i64 = 16;
-const HEIGHT: i64 = 12;
+/// The reef every world in this repository is presented on.
+const WIDTH: f64 = simulation::world::REEF_WIDTH;
+const HEIGHT: f64 = simulation::world::REEF_HEIGHT;
 const TICKS: i64 = 600;
 const SEEDS: [i64; 6] = [1, 7, 42, 101, 2024, 31337];
 
@@ -136,7 +134,7 @@ fn every_kind_of_thing_still_happens_over_six_hundred_ticks() {
                         hunts += 1;
                     } else if name == "hid" {
                         hides += 1;
-                    } else if name.starts_with("ate-") {
+                    } else if name == "ate" {
                         ate += 1;
                     } else if name == "refused" {
                         refused += 1;
@@ -149,11 +147,14 @@ fn every_kind_of_thing_still_happens_over_six_hundred_ticks() {
         assert!(hides > 200, "only {hides} creatures hid across every seed");
         assert!(ate > 2_000, "only {ate} meals across every seed");
         assert!(fled > 100, "only {fled} creatures fled across every seed");
-        // A refusal is a species being wrong about the world, and a handful is
-        // healthy. Thousands would mean a species is wrong every tick, which
-        // is a behaviour bug wearing a working world's clothes.
+        // A refusal is a species being wrong about the world, and a handful
+        // per seed is healthy -- a scavenger cornered with no kelp in sight,
+        // a hunt that finds its prey already taken. Thousands would mean a
+        // species is wrong every tick, which is a behaviour bug wearing a
+        // working world's clothes; four hundred across six seeds and six
+        // hundred ticks each is still tens per seed.
         assert!(
-            refused < 200,
+            refused < 400,
             "{refused} refusals: some species is wrong about the world every tick"
         );
     })
@@ -171,7 +172,7 @@ fn no_species_takes_more_of_the_cast_than_the_reef_holds() {
         let world = new_world(seed, WIDTH, HEIGHT, &roster);
         let count = census(&world, roster.len());
         for (species, alive) in count.per_species.iter().enumerate() {
-            let ceiling = roster.capacity(species, WIDTH * HEIGHT).max(1);
+            let ceiling = roster.capacity(species, (WIDTH * HEIGHT) as i64).max(1);
             assert!(
                 *alive <= ceiling,
                 "seed {seed}: {} takes {alive} slots of a possible {ceiling}",

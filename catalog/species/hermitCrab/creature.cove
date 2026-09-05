@@ -6,51 +6,51 @@ use contract.SelfView
 use instinct.away
 use instinct.nearest
 use instinct.richest
-use instinct.stepOr
+use instinct.toward
 use instinct.wander
 
-// The hermit crab: it steps away from anybody who comes near, unless it is
-// hungry and standing on food.
+// The hermit crab: it backs away from anybody who comes near, unless it is
+// hungry and floating over food.
 //
 // The wildcard, and the whole of it is that one sentence. Away from *anybody*
 // -- not from what hunts it, from a grazer that has never harmed anything.
-// That is the legible part: a creature that fled only its predators would
-// look like a nervous grazer, and one that flees a grazer looks like nothing
-// else in the tank. Sight range one, so what it is reacting to is always a
-// creature standing right beside it and a visitor can see what it is
-// reacting to.
+// That is the legible part: a creature that fled only its predators would look
+// like a nervous grazer, and one that backs away from a grazer looks like
+// nothing else on the reef. Its sight is the shortest in the catalog, so what
+// it is reacting to is always something a visitor can see is right beside it.
 //
 // The second clause is not decoration and it was not in the first version.
-// Without it the crab walks for ever: over two hundred ticks of a
-// twenty-four by sixteen reef it asked to step away three hundred and
-// thirty-two times and to eat fifty-eight, on a reef whose food was piling
-// up the whole time, and it was extinct by the eightieth tick of every seed
-// and every grid size. The crab did not starve because the reef was bare. It
+// Without it the crab swims for ever: over two hundred ticks it asked to back
+// away three hundred and thirty-two times and to eat fifty-eight, on a reef
+// whose food was piling up the whole time, and it was gone by the eightieth
+// tick of every seed. The crab did not starve because the reef was bare. It
 // starved because it never stopped moving.
 //
 // So a hungry crab holds its ground. It is still one sentence, it is still
-// visible -- a crab standing still on a good patch with a grazer beside it
-// is a crab about to be seen leaving as soon as it has eaten -- and it is
-// what makes the rule survivable rather than merely clear.
+// visible -- a crab sitting still over a good patch with a grazer beside it is
+// a crab about to be seen leaving as soon as it has eaten -- and it is what
+// makes the rule survivable rather than merely clear.
 
 /// The one intent this crab answers the tick with, and why.
 export fn decide(view: SelfView, observation: Observation) -> Decision {
-  if view.energy < hungry() && observation.here > 0 {
+  if view.energy < hungry() && observation.here > 0.0 {
     return Decision(intent: Intent.Eat, reason: Reason.Feeding)
   }
   match nearest(observation.nearby) {
-    Some(company) => return Decision(
-      intent: stepOr(away(company.at, observation), Intent.Rest),
-      reason: Reason.Crowded,
-    )
+    Some(company) => if company.away < personal() {
+      return Decision(
+        intent: away(company.at, 0.75),
+        reason: Reason.Crowded,
+      )
+    }
     None => ()
   }
-  if observation.here > 0 && view.energy < full() {
+  if observation.here > 0.0 && view.energy < full() {
     return Decision(intent: Intent.Eat, reason: Reason.Feeding)
   }
   match richest(observation) {
-    Some(patch) => Decision(
-      intent: Intent.Move(patch.heading),
+    Some(morsel) => Decision(
+      intent: toward(morsel.at, 0.5),
       reason: Reason.SeekingFood,
     )
     None => Decision(
@@ -58,6 +58,14 @@ export fn decide(view: SelfView, observation: Observation) -> Decision {
       reason: Reason.Exploring,
     )
   }
+}
+
+/// How close is too close.
+///
+/// Most of what a crab can see at all, which is the point: what it backs away
+/// from is always something a visitor can see is right beside it.
+fn personal() -> Float {
+  6.0
 }
 
 /// The energy below which a crab will eat with somebody beside it.

@@ -3,9 +3,19 @@
 // The simulation is a fixed step: it advances by a whole tick or not at all,
 // and its hash must not depend on how fast a frame is drawn. So the renderer
 // never asks it to advance a fraction of a tick — instead it holds the last
-// two snapshots and interpolates a creature's drawn position between them,
-// which is smooth motion built entirely on the drawing side of the line the
-// determinism has to sit on.
+// two snapshots and interpolates a creature's drawn position, facing and
+// speed between them, which is smooth motion built entirely on the drawing
+// side of the line the determinism has to sit on.
+//
+// `facing` is interpolated too, and not just position: a creature turns a
+// bounded amount each tick (`agility` in `crates/simulation/src/world.rs`),
+// so between two ticks its drawn heading should ease the same way its drawn
+// position does, rather than snapping the instant the tick resolves. Facing
+// is a unit vector, so the two components are blended and the result
+// re-normalised — this is not a spherical interpolation, but the turn a
+// single tick can make is always small, so a linear blend of the two
+// components and a re-normalisation is indistinguishable from one at the
+// distances this reef ever asks for.
 //
 // A creature's id is handed out once, from a counter that only grows
 // (`next_id` in `crates/simulation/src/world.rs`) — a dead creature's id is
@@ -18,10 +28,7 @@
 import type { CreatureSnapshot, Snapshot } from "./snapshot.js";
 
 /** A creature at a point between two ticks, ready to draw. */
-export interface DrawnCreature extends Omit<CreatureSnapshot, "x" | "y"> {
-  readonly x: number;
-  readonly y: number;
-}
+export interface DrawnCreature extends CreatureSnapshot {}
 
 /** A creature that left between the last two snapshots, and where it was. */
 export interface Departed {
@@ -29,6 +36,31 @@ export interface Departed {
   readonly species: number;
   readonly x: number;
   readonly y: number;
+}
+
+/** `a + (b - a) * t`, the one piece of arithmetic every field below shares. */
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+/**
+ * `was.facing` blended towards `is.facing` by `t` and re-normalised — see
+ * the module comment for why a linear blend is enough here. Falls back to
+ * `is`'s own facing on the vanishing chance the blend cancels to (almost)
+ * nothing, which only a near-perfect reversal within one tick could cause.
+ */
+function lerpFacing(
+  was: { readonly facingX: number; readonly facingY: number },
+  is: { readonly facingX: number; readonly facingY: number },
+  t: number,
+): { facingX: number; facingY: number } {
+  const x = lerp(was.facingX, is.facingX, t);
+  const y = lerp(was.facingY, is.facingY, t);
+  const length = Math.sqrt(x * x + y * y);
+  if (length < 1e-6) {
+    return { facingX: is.facingX, facingY: is.facingY };
+  }
+  return { facingX: x / length, facingY: y / length };
 }
 
 /**
@@ -60,8 +92,10 @@ export function interpolateCreatures(
     }
     return {
       ...creature,
-      x: was.x + (creature.x - was.x) * clamped,
-      y: was.y + (creature.y - was.y) * clamped,
+      x: lerp(was.x, creature.x, clamped),
+      y: lerp(was.y, creature.y, clamped),
+      ...lerpFacing(was, creature, clamped),
+      speed: lerp(was.speed, creature.speed, clamped),
     };
   });
 }

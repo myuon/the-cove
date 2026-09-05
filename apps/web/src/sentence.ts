@@ -3,8 +3,8 @@
 // did not build.
 //
 // A sentence built here may name only what `observation` carried: `nearby`,
-// `around`, `here`, `scent`. That is the whole of what the creature could
-// have reasoned from, and the catalog's own species files
+// `food`, `kelp`, `here`. That is the whole of what the creature could have
+// reasoned from, and the catalog's own species files
 // (`catalog/species/*/creature.cove`) are the ground truth this file is
 // translating — `reason` names which branch of which file ran, and the
 // table below is one English sentence per branch, not an invention. Cross a
@@ -17,13 +17,25 @@
 // behalf when its program never finished, and printing "waiting" over that
 // would be putting words in a mouth that never opened. So `buildSentence`
 // checks it first and returns before the table is ever consulted.
+//
+// # The reef is continuous
+//
+// There are no cells, no compass headings, and no scent trail any more — a
+// creature swims `toward` or `away` from a place, never `move-north`, and it
+// senses a mouthful directly rather than smelling upwind of one. So this file
+// never names a direction; it names what a creature was moving relative to,
+// which is what `nearby`/`food`/`kelp` actually give it, and it names a
+// distance as one of four bands — "right beside it" through "at the edge of
+// sight" — because "8.43 units away" means nothing to a visitor and a step
+// count no longer exists to fall back on.
 
 import type {
   CatalogEntry,
+  FocusBed,
   FocusFailure,
+  FocusMorsel,
   FocusSighting,
   FocusSnapshot,
-  Heading,
 } from "./snapshot.js";
 
 /** The one or two sentences the inspector's plain-language layer shows. */
@@ -34,15 +46,21 @@ export interface Sentence {
   readonly note: string | null;
 }
 
-const HUNTING_ROLES = new Set(["hunter", "ambusher"]);
-const PREY_ROLES = new Set(["grazer", "scavenger", "cooperator"]);
+/** `contract.cove`'s `Role.hunts()`: the roles a hunt fears fleeing. */
+export const HUNTING_ROLES: ReadonlySet<string> = new Set(["hunter", "ambusher"]);
+/** `contract.cove`'s `Role.isPrey()`: the roles a hunter chases. */
+export const PREY_ROLES: ReadonlySet<string> = new Set([
+  "grazer",
+  "scavenger",
+  "cooperator",
+]);
 
 function isThreat(sighting: FocusSighting): boolean {
   return HUNTING_ROLES.has(sighting.role);
 }
 
-function isPrey(sighting: FocusSighting): boolean {
-  return PREY_ROLES.has(sighting.role);
+function isCatchablePrey(sighting: FocusSighting): boolean {
+  return PREY_ROLES.has(sighting.role) && !sighting.hidden;
 }
 
 /** "a hunter", "an ambusher" — the indefinite article a role's word needs. */
@@ -50,19 +68,150 @@ function withArticle(word: string): string {
   return `${/^[aeiou]/i.test(word) ? "an" : "a"} ${word}`;
 }
 
-/** "1 step" / "3 steps". */
-function steps(away: number): string {
-  return `${away} ${away === 1 ? "step" : "steps"}`;
+/**
+ * A distance in reef units, as a band a visitor can feel rather than a
+ * number they would have to calibrate: under ~4 is close enough to reach
+ * out and touch, under ~9 is a couple of body lengths, under ~16 is most of
+ * what anything on this reef can see across, and past that is the edge of
+ * sight for everything but a hunter.
+ */
+export function band(away: number): string {
+  if (away < 4) return "right beside it";
+  if (away < 9) return "a length or two away";
+  if (away < 16) return "across the water";
+  return "at the edge of sight";
 }
 
-/** How much food a level (`0..4`) reads as, in words rather than a count a
- * visitor would have to look up against `renderer.ts`'s colour scale. */
-function foodWord(level: number): string {
-  if (level <= 0) return "no";
-  if (level === 1) return "a little";
-  if (level === 2) return "some";
-  if (level === 3) return "plenty of";
+/** How much food an amount reads as, in words rather than a number a visitor
+ * would have to weigh against `MAX_MORSEL` or against how many patches are
+ * overlapping underfoot. Shared between a single morsel's `amount` (capped
+ * at 4) and `here` (a sum across every morsel a creature is standing in,
+ * which is not capped at all) — the boundary between "some" and "plenty of"
+ * matters more than which of the two produced the number. */
+export function foodWord(amount: number): string {
+  if (amount <= 0) return "no";
+  if (amount < 1) return "a little";
+  if (amount < 3) return "some";
+  if (amount < 8) return "plenty of";
   return "a lot of";
+}
+
+/**
+ * The nearest bed of kelp in an observation — `instinct.cove`'s `shelter()`,
+ * re-read off the same array rather than re-derived, since `kelp` already
+ * arrives nearest-first.
+ */
+export function nearestBed(kelp: readonly FocusBed[]): FocusBed | undefined {
+  return kelp[0];
+}
+
+/**
+ * The fullest mouthful in an observation, nearest of those tied —
+ * `instinct.cove`'s `richest()`. Not simply `food[0]`: `food` arrives
+ * nearest-first, not fullest-first, so this is its own fold the same way the
+ * catalog's is.
+ */
+export function richestMorsel(
+  food: readonly FocusMorsel[],
+): FocusMorsel | undefined {
+  let best: FocusMorsel | undefined;
+  for (const morsel of food) {
+    if (!best || morsel.amount > best.amount) {
+      best = morsel;
+    } else if (morsel.amount === best.amount && morsel.away < best.away) {
+      best = morsel;
+    }
+  }
+  return best;
+}
+
+/** The nearest creature that hunts this one — `instinct.cove`'s
+ * `nearest(threats(...))`. */
+export function nearestThreat(
+  nearby: readonly FocusSighting[],
+): FocusSighting | undefined {
+  return nearby.find(isThreat);
+}
+
+/** The nearest prey a lunge could actually catch — `kelpHunter.cove`'s
+ * `nearest(catchable(prey(...)))`: visible, and not hidden in kelp. */
+export function nearestCatchablePrey(
+  nearby: readonly FocusSighting[],
+): FocusSighting | undefined {
+  return nearby.find(isCatchablePrey);
+}
+
+/**
+ * What this creature is reacting to, as a place to draw a line to — the
+ * renderer's use of the same observation this file turns into words. `null`
+ * whenever the reason has nothing at a distance worth pointing at (`feeding`
+ * is happening right where the creature already is).
+ */
+export function reactionTarget(
+  focus: FocusSnapshot,
+): { readonly x: number; readonly y: number } | null {
+  const nearby = focus.observation.nearby;
+  switch (focus.reason) {
+    case "fleeing_threat": {
+      const threat = nearestThreat(nearby);
+      return threat ? { x: threat.x, y: threat.y } : null;
+    }
+    case "sheltering": {
+      if (focus.intent === "hide") {
+        const threat = nearestThreat(nearby);
+        return threat ? { x: threat.x, y: threat.y } : null;
+      }
+      const bed = nearestBed(focus.observation.kelp);
+      return bed ? { x: bed.x, y: bed.y } : null;
+    }
+    case "seeking_food": {
+      const morsel = richestMorsel(focus.observation.food);
+      return morsel ? { x: morsel.x, y: morsel.y } : null;
+    }
+    case "hunting": {
+      if (focus.intent.startsWith("hunt-")) {
+        const targetId = Number(focus.intent.slice("hunt-".length));
+        const target = nearby.find((s) => s.id === targetId);
+        return target ? { x: target.x, y: target.y } : null;
+      }
+      const prey = nearestCatchablePrey(nearby);
+      return prey ? { x: prey.x, y: prey.y } : null;
+    }
+    case "crowded": {
+      const closest = nearby[0];
+      return closest ? { x: closest.x, y: closest.y } : null;
+    }
+    default:
+      return null;
+  }
+}
+
+/** What `intent` asks for, parsed straight off `Intent.name()` in
+ * `catalog/contract/contract.cove`: `toward`, `away`, `eat`, `hunt-{id}`,
+ * `hide`, `rest` — never a compass direction, because a continuous swim has
+ * no cardinal heading. */
+type Intent =
+  | { readonly kind: "toward" }
+  | { readonly kind: "away" }
+  | { readonly kind: "eat" }
+  | { readonly kind: "hunt"; readonly targetId: number }
+  | { readonly kind: "hide" }
+  | { readonly kind: "rest" }
+  | { readonly kind: "other" };
+
+function classifyIntent(intent: string): Intent {
+  if (intent === "toward") return { kind: "toward" };
+  if (intent === "away") return { kind: "away" };
+  if (intent === "eat") return { kind: "eat" };
+  if (intent === "hide") return { kind: "hide" };
+  if (intent === "rest") return { kind: "rest" };
+  if (intent.startsWith("hunt-")) {
+    const targetId = Number(intent.slice("hunt-".length));
+    if (Number.isFinite(targetId)) {
+      return { kind: "hunt", targetId };
+    }
+  }
+  return { kind: "other" };
 }
 
 /**
@@ -88,39 +237,6 @@ function speciesLabel(
     return entry.role;
   }
   return entry.name;
-}
-
-/** What `intent` asks for, parsed the same way `shapes.ts`'s
- * `headingAngleOf` reads a `moved-*` string — but keeping the word rather
- * than converting it to an angle, and covering every intent shape rather
- * than only the ones that carry a heading. */
-type Intent =
-  | { readonly kind: "move"; readonly heading: Heading }
-  | { readonly kind: "eat" }
-  | { readonly kind: "hunt"; readonly targetId: number }
-  | { readonly kind: "hide" }
-  | { readonly kind: "rest" }
-  | { readonly kind: "other" };
-
-const HEADINGS: readonly Heading[] = ["north", "east", "south", "west"];
-
-function classifyIntent(intent: string): Intent {
-  if (intent === "eat") return { kind: "eat" };
-  if (intent === "hide") return { kind: "hide" };
-  if (intent === "rest") return { kind: "rest" };
-  if (intent.startsWith("hunt-")) {
-    const targetId = Number(intent.slice("hunt-".length));
-    if (Number.isFinite(targetId)) {
-      return { kind: "hunt", targetId };
-    }
-    return { kind: "other" };
-  }
-  for (const heading of HEADINGS) {
-    if (intent === `move-${heading}`) {
-      return { kind: "move", heading };
-    }
-  }
-  return { kind: "other" };
 }
 
 /** The sentence for an invocation that never became a `Decision` — see the
@@ -164,30 +280,26 @@ function headline(
 
   switch (focus.reason) {
     case "fleeing_threat": {
-      const threat = nearby.find(isThreat);
+      // `reefGrazer.cove` and `shyScavenger.cove` only ever pair this reason
+      // with `Intent.Away` — heading for cover is `sheltering`, not this.
+      if (intent.kind !== "away") {
+        return fallbackSentence(focus);
+      }
+      const threat = nearestThreat(nearby);
       const who = threat ? withArticle(threat.role) : "something";
-      const distance = threat ? steps(threat.away) : "some steps";
-      if (intent.kind === "move") {
-        return `Ran ${intent.heading} because ${who} was ${distance} away.`;
-      }
-      if (intent.kind === "hide") {
-        return `Hid in the kelp because ${who} was ${distance} away.`;
-      }
-      if (intent.kind === "rest") {
-        return `Had nowhere to go: ${who} ${distance} away and every way out blocked.`;
-      }
-      return fallbackSentence(focus);
+      const distance = threat ? band(threat.away) : "somewhere close";
+      return `Bolted because ${who} was ${distance}.`;
     }
 
     case "sheltering": {
       if (intent.kind === "hide") {
         return "Hid in the kelp.";
       }
-      if (intent.kind === "move") {
-        const threat = nearby.find(isThreat);
+      if (intent.kind === "toward") {
+        const threat = nearestThreat(nearby);
         const who = threat ? withArticle(threat.role) : "something";
-        const distance = threat ? steps(threat.away) : "some steps";
-        return `Made for the kelp with ${who} ${distance} away.`;
+        const distance = threat ? band(threat.away) : "somewhere close";
+        return `Made for the kelp with ${who} ${distance}.`;
       }
       return fallbackSentence(focus);
     }
@@ -200,23 +312,12 @@ function headline(
     }
 
     case "seeking_food": {
-      if (intent.kind === "move") {
-        // `scent` being set is not enough on its own: `shyScavenger.cove`
-        // only steps towards it below a species-specific energy this
-        // catalog does not expose, and above that line it falls through to
-        // the richest patch it can see instead — same as `seeking_food`
-        // ever does without a scent at all. Whether that is what happened
-        // *this* tick is exactly what comparing the two headings answers,
-        // without needing to know the threshold: a move that did not go
-        // where the scent pointed was not following it, whatever else is
-        // true this tick.
-        if (focus.observation.scent === intent.heading) {
-          return `Followed the smell of food to the ${intent.heading}.`;
+      if (intent.kind === "toward") {
+        const morsel = richestMorsel(focus.observation.food);
+        if (!morsel) {
+          return fallbackSentence(focus);
         }
-        const patch = focus.observation.around.find(
-          (p) => p.heading === intent.heading,
-        );
-        return `Moved ${intent.heading} towards ${foodWord(patch?.food ?? 0)} food.`;
+        return `Swam toward ${foodWord(morsel.amount)} food, ${band(morsel.away)}.`;
       }
       return fallbackSentence(focus);
     }
@@ -227,42 +328,44 @@ function headline(
         const name = target
           ? speciesLabel(catalog, target.species, metSpecies)
           : "creature";
+        const distance = target ? band(target.away) : "right beside it";
         const outcome = focus.result.startsWith("hunted-")
           ? ", and caught it."
           : focus.result.startsWith("missed-")
             ? ", and missed."
             : ".";
-        return `Lunged at the ${name} one step away${outcome}`;
+        return `Lunged at the ${name}, ${distance}${outcome}`;
       }
-      if (intent.kind === "move") {
-        const prey = nearby.find(isPrey);
+      if (intent.kind === "toward") {
+        const prey = nearestCatchablePrey(nearby);
         const name = prey
           ? speciesLabel(catalog, prey.species, metSpecies)
           : "something";
-        const distance = prey ? steps(prey.away) : "several steps";
-        return `Closed on the ${name}, ${distance} away.`;
+        const distance = prey ? band(prey.away) : "somewhere close";
+        return `Closed on the ${name}, ${distance}.`;
       }
       return fallbackSentence(focus);
     }
 
     case "crowded": {
+      // `hermitCrab.cove` and `shyScavenger.cove` only ever pair this reason
+      // with `Intent.Away` — there is no "boxed in" case any more, because a
+      // continuous swim is never blocked in every direction at once the way
+      // a step on a full grid could be.
+      if (intent.kind !== "away") {
+        return fallbackSentence(focus);
+      }
       const closest = nearby[0];
       const name = closest
         ? speciesLabel(catalog, closest.species, metSpecies)
         : "someone";
-      if (intent.kind === "move") {
-        const distance = closest ? steps(closest.away) : "some steps";
-        return `Stepped away from the ${name} ${distance} away.`;
-      }
-      if (intent.kind === "rest") {
-        return `Boxed in, with the ${name} right beside it.`;
-      }
-      return fallbackSentence(focus);
+      const distance = closest ? band(closest.away) : "somewhere close";
+      return `Stepped away from the ${name}, ${distance}.`;
     }
 
     case "exploring": {
-      if (intent.kind === "move") {
-        return `Wandered ${intent.heading} with nothing in sight.`;
+      if (intent.kind === "toward") {
+        return "Wandered, with nothing in sight.";
       }
       return fallbackSentence(focus);
     }
@@ -281,13 +384,13 @@ function headline(
 
 /** The second sentence: what the world did other than what was asked. `null`
  * whenever it did exactly that — a `hunting` catch or miss is already folded
- * into the headline above, so this never repeats it. */
+ * into the headline above, so this never repeats it, and there is no more
+ * "something was already there": a continuous swim is never blocked, only
+ * refused (an eat with nothing in reach, a hunt with nothing to catch, a
+ * hide with no cover), and a refusal already has its own sentence below. */
 function note(focus: FocusSnapshot): string | null {
   if (focus.refusal) {
     return `The world refused: ${focus.refusal}.`;
-  }
-  if (focus.result.startsWith("blocked-")) {
-    return "Something was already there.";
   }
   return null;
 }
@@ -346,23 +449,17 @@ export function reasonWord(reason: string): string {
  */
 export function memoryWord(memory: string): string {
   if (memory === "spawned") return "It only just arrived.";
+  if (memory === "swam") return "It swam, last tick.";
+  if (memory === "ate") return "It ate, last tick.";
   if (memory === "hid") return "It hid, last tick.";
   if (memory === "rested") return "It rested, last tick.";
   if (memory === "refused") {
     return "The world refused what it asked for, last tick.";
   }
-  for (const heading of HEADINGS) {
-    if (memory === `moved-${heading}`) {
-      return `It moved ${heading}, last tick.`;
-    }
-    if (memory === `blocked-${heading}`) {
-      return `It tried to move ${heading}, last tick, and found something in the way.`;
-    }
-  }
-  if (memory.startsWith("ate-")) return "It ate, last tick.";
   if (memory.startsWith("hunted-")) return "It caught something, last tick.";
   if (memory.startsWith("missed-")) {
     return "It lunged at something, last tick, and missed.";
   }
   return memory;
 }
+

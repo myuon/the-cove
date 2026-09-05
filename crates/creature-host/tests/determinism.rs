@@ -20,12 +20,12 @@ fn shy_scavenger() -> Species {
 
 // `crowded` is the heaviest of the named scenarios and so fills the heap in
 // the fewest invocations: measured directly, `Session::heap_words()` climbs
-// on every call up to the 34,000th or so and is flat at 4,194,286 from there
-// on for at least the next 16,000. Fifty thousand invocations puts both the
-// three-quarter mark (37,500) and the end comfortably past that climb, so a
-// heap that were actually growing without bound — a leak — would show up as
-// a difference here, and a heap that simply had not collected yet would not
-// be mistaken for one.
+// on every call up to the 51,000th or so and is flat at 4,194,280 from there
+// on for at least the next several thousand. Eighty thousand invocations puts
+// both the three-quarter mark (60,000) and the end comfortably past that
+// climb, so a heap that were actually growing without bound — a leak — would
+// show up as a difference here, and a heap that simply had not collected yet
+// would not be mistaken for one.
 //
 // If this ever starts failing because the sample points disagree, the first
 // thing to check is whether a change moved where the climb ends, not whether
@@ -36,8 +36,8 @@ fn ten_thousand_ticks_of_one_creature_cost_and_answer_the_same_every_time() {
     let lowering = species.lower().expect("lowers");
     species.serve(&lowering, |session| {
         let (view, world) = scenario::crowded();
-        const TOTAL: u64 = 50_000;
-        const THREE_QUARTERS: u64 = 37_500;
+        const TOTAL: u64 = 80_000;
+        const THREE_QUARTERS: u64 = 60_000;
 
         let first = session.decide_unbounded(&view, &world);
         let mut sampled_heap = None;

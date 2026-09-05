@@ -15,8 +15,8 @@ fn catalog_dir() -> PathBuf {
     workspace_root().join(simulation::CATALOG)
 }
 
-const WIDTH: i64 = 24;
-const HEIGHT: i64 = 16;
+const WIDTH: f64 = simulation::world::REEF_WIDTH;
+const HEIGHT: f64 = simulation::world::REEF_HEIGHT;
 const TICKS: i64 = 100;
 
 // Two different seeds, run to the same tick: if their hashes still agreed,

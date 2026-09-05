@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use creature_host::Cell;
+use creature_host::Point;
 use simulation::catalog::{serve_all, Roster};
 use simulation::world::{census, decisions, new_world, resolve};
 
@@ -24,8 +24,8 @@ fn catalog_dir() -> PathBuf {
 }
 
 const SEED: i64 = 7;
-const WIDTH: i64 = 24;
-const HEIGHT: i64 = 16;
+const WIDTH: f64 = simulation::world::REEF_WIDTH;
+const HEIGHT: f64 = simulation::world::REEF_HEIGHT;
 const TICKS: i64 = 200;
 /// The species this run is about. Its every decision is counted.
 const WATCHED: &str = "hermitCrab";
@@ -49,7 +49,7 @@ fn main() {
             "tick", "alive", WATCHED, "energy", "food"
         );
         for step in 0..TICKS {
-            let watching: Vec<Cell> = world
+            let watching: Vec<Point> = world
                 .creatures
                 .iter()
                 .filter(|c| c.species == watched)
@@ -81,7 +81,7 @@ fn main() {
                     .sum();
                 let count = seen.per_species[watched];
                 println!(
-                    "{:>5}{:>8}{:>8}{:>10}{:>10}",
+                    "{:>5}{:>8}{:>8}{:>10}{:>10.1}",
                     world.tick,
                     seen.alive,
                     count,
