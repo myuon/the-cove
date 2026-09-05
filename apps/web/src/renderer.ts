@@ -709,57 +709,142 @@ function drawTrails(
 // *shape* before any colour is read — which is what the accessibility
 // criterion asks for anyway.
 
-type MarkKind = "chevron" | "circle" | "diamond" | "hex";
+// --- One creature: a body built by repeating one shape down a spine. ---
+//
+// A single primitive is a token, not an animal. A body is a *series* of them:
+// four to seven of the same polygon strung along the facing axis, each a
+// little smaller or larger than the last, some of them turned a few degrees
+// further round than the one in front, and the whole chain carrying a wave
+// that travels from head to tail.
+//
+// That is the shape a segmented sea creature actually has, and it is also an
+// ordinary generative move — one rule, repeated, varying — so it stays in the
+// same register as the field it swims in rather than becoming an illustration
+// pasted on top of one. And the wave is free motion: its speed and amplitude
+// follow the creature's own, so a fleeing animal visibly thrashes and a
+// resting one barely stirs, which is the signal the geometric marks lost.
 
-const MARKS: Readonly<Record<string, MarkKind>> = {
-  wedge: "chevron",
-  round: "circle",
-  ring: "diamond",
-  spiral: "hex",
+type Primitive = "circle" | "triangle" | "diamond" | "hex";
+
+interface Anatomy {
+  /** Which polygon the body is made of. */
+  readonly of: Primitive;
+  /** How many of them. */
+  readonly segments: number;
+  /** How far apart, as a fraction of the head's radius. */
+  readonly gap: number;
+  /** The radius of each segment, head first, as fractions of the head's. */
+  readonly profile: readonly number[];
+  /** Degrees each segment is turned past the one in front. */
+  readonly twist: number;
+  /** How far the tail swings, as a fraction of the head's radius. */
+  readonly sway: number;
+  /** How many strokes fan out of the last segment. */
+  readonly fin: number;
+}
+
+const ANATOMY: Readonly<Record<string, Anatomy>> = {
+  // The grazer: round and blunt, a chain of circles that tapers gently. It is
+  // the shape everything else is read against, so it is the plainest.
+  round: {
+    of: "circle",
+    segments: 5,
+    gap: 0.68,
+    profile: [0.95, 1, 0.82, 0.58, 0.32],
+    twist: 0,
+    sway: 0.55,
+    fin: 3,
+  },
+  // The hunter: long, narrow, and the only body made of a shape with a point.
+  // Seven segments so the wave down it is visible as a wave.
+  wedge: {
+    of: "triangle",
+    segments: 7,
+    gap: 0.6,
+    profile: [0.66, 0.95, 1, 0.82, 0.62, 0.42, 0.26],
+    twist: 0,
+    sway: 0.85,
+    fin: 4,
+  },
+  // The scavenger: a short stack of diamonds, each turned a little further,
+  // so the body reads as something crystalline drifting rather than swimming.
+  ring: {
+    of: "diamond",
+    segments: 4,
+    gap: 0.6,
+    profile: [0.85, 1, 0.72, 0.44],
+    twist: 22,
+    sway: 0.45,
+    fin: 2,
+  },
+  // The crab: three hexagons, largest at the front, barely swaying. A shell
+  // with something under it.
+  spiral: {
+    of: "hex",
+    segments: 3,
+    gap: 0.56,
+    profile: [1, 0.72, 0.45],
+    twist: 14,
+    sway: 0.22,
+    fin: 2,
+  },
 };
 
-const CRUISE_REFERENCE = 1.6;
+const CRUISE_REFERENCE_SPEED = 1.6;
 
-function markPath(
+/// One primitive appended to whatever path is open, for building a union.
+function subPath(
   ctx: CanvasRenderingContext2D,
-  kind: MarkKind,
-  px: number,
-  py: number,
+  of: Primitive,
+  cx: number,
+  cy: number,
+  r: number,
+  angle: number,
+): void {
+  if (of === "circle") {
+    ctx.moveTo(cx + r, cy);
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    return;
+  }
+  const sides = of === "triangle" ? 3 : of === "diamond" ? 4 : 6;
+  for (let i = 0; i < sides; i += 1) {
+    const a = angle + (i / sides) * Math.PI * 2;
+    const x = cx + Math.cos(a) * r;
+    const y = cy + Math.sin(a) * r;
+    if (i === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+  ctx.closePath();
+}
+
+function primitivePath(
+  ctx: CanvasRenderingContext2D,
+  of: Primitive,
+  cx: number,
+  cy: number,
   r: number,
   angle: number,
 ): void {
   ctx.beginPath();
-  switch (kind) {
-    case "chevron": {
-      // A dart. The only mark with a point, for the only role that has one.
-      const back = angle + Math.PI;
-      ctx.moveTo(px + Math.cos(angle) * r * 1.45, py + Math.sin(angle) * r * 1.45);
-      ctx.lineTo(px + Math.cos(back - 0.42) * r * 1.1, py + Math.sin(back - 0.42) * r * 1.1);
-      ctx.lineTo(px + Math.cos(back) * r * 0.45, py + Math.sin(back) * r * 0.45);
-      ctx.lineTo(px + Math.cos(back + 0.42) * r * 1.1, py + Math.sin(back + 0.42) * r * 1.1);
-      ctx.closePath();
-      break;
-    }
-    case "circle":
-      ctx.arc(px, py, r, 0, Math.PI * 2);
-      break;
-    case "diamond":
-    case "hex": {
-      const sides = kind === "diamond" ? 4 : 6;
-      for (let i = 0; i < sides; i += 1) {
-        const a = angle + (i / sides) * Math.PI * 2;
-        const x = px + Math.cos(a) * r;
-        const y = py + Math.sin(a) * r;
-        if (i === 0) {
-          ctx.moveTo(x, y);
-        } else {
-          ctx.lineTo(x, y);
-        }
-      }
-      ctx.closePath();
-      break;
+  if (of === "circle") {
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    return;
+  }
+  const sides = of === "triangle" ? 3 : of === "diamond" ? 4 : 6;
+  for (let i = 0; i < sides; i += 1) {
+    const a = angle + (i / sides) * Math.PI * 2;
+    const x = cx + Math.cos(a) * r;
+    const y = cy + Math.sin(a) * r;
+    if (i === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
     }
   }
+  ctx.closePath();
 }
 
 function drawCreatureMark(
@@ -772,54 +857,118 @@ function drawCreatureMark(
 ): void {
   const centre = toPixel(layout, creature.x, creature.y);
   const angle = Math.atan2(creature.facingY, creature.facingX);
-  const kind = MARKS[entry.shape] ?? "circle";
-  const r = (0.7 + entry.size * 0.13) * layout.cell;
-  const speedFrac = Math.min(1, Math.max(0, creature.speed / CRUISE_REFERENCE));
+  const body = ANATOMY[entry.shape] ?? ANATOMY["round"]!;
+  const head = (0.62 + entry.size * 0.12) * layout.cell;
+  const speedFrac = Math.min(
+    1,
+    Math.max(0, creature.speed / CRUISE_REFERENCE_SPEED),
+  );
 
-  ctx.save();
-  ctx.globalAlpha = alphaMul;
-  ctx.lineJoin = "round";
+  // The wave travels head to tail: one phase for the animal, and each segment
+  // reads it a little later than the one in front.
+  const beat = (0.5 + speedFrac * 2.4) / 1000;
+  const phase = now * beat * Math.PI * 2 + creature.id * 2.399963;
+  const amplitude = head * body.sway * (0.18 + speedFrac * 0.95);
 
-  // A halo, but a ring rather than a smear: the one soft thing on the reef
-  // would be the one thing that looked out of place.
-  ctx.globalAlpha = alphaMul * (0.1 + speedFrac * 0.16);
-  ctx.strokeStyle = entry.colour;
-  ctx.lineWidth = Math.max(1, layout.cell * 0.12);
-  markPath(ctx, kind, centre.px, centre.py, r * 1.5, angle);
-  ctx.stroke();
+  const dx = Math.cos(angle);
+  const dy = Math.sin(angle);
+  const nx = -dy;
+  const ny = dx;
 
-  // The mark itself: filled faintly so it has body, outlined brightly so it
-  // has an edge. Contrast of edge against near-black is what the first pass
-  // had none of.
-  ctx.globalAlpha = alphaMul * 0.26;
-  ctx.fillStyle = entry.colour;
-  markPath(ctx, kind, centre.px, centre.py, r, angle);
-  ctx.fill();
-
-  ctx.globalAlpha = alphaMul;
-  ctx.strokeStyle = entry.colour;
-  ctx.lineWidth = Math.max(1, layout.cell * 0.055);
-  markPath(ctx, kind, centre.px, centre.py, r, angle);
-  ctx.stroke();
-
-  // Where it is going, as a line out of the front. Length follows speed, so
-  // a creature at rest has none and a fleeing one is visibly urgent.
-  if (speedFrac > 0.02) {
-    const reach = r * (0.6 + speedFrac * 2.4);
-    ctx.globalAlpha = alphaMul * (0.25 + speedFrac * 0.5);
-    ctx.lineWidth = Math.max(0.8, layout.cell * 0.03);
-    ctx.beginPath();
-    ctx.moveTo(px(centre.px, angle, r * 1.1), py(centre.py, angle, r * 1.1));
-    ctx.lineTo(px(centre.px, angle, r * 1.1 + reach), py(centre.py, angle, r * 1.1 + reach));
-    ctx.stroke();
+  const nodes: { x: number; y: number; r: number; a: number }[] = [];
+  let along = 0;
+  for (let i = 0; i < body.segments; i += 1) {
+    const scale = body.profile[i] ?? 0.3;
+    const r = head * scale;
+    if (i > 0) {
+      along += head * body.gap * ((body.profile[i - 1] ?? 1) + scale) * 0.5;
+    }
+    // Amplitude grows down the body: a head barely moves and a tail whips.
+    const swing =
+      Math.sin(phase - i * 0.85) * amplitude * (i / (body.segments - 1 || 1));
+    nodes.push({
+      x: centre.px - dx * along + nx * swing,
+      y: centre.py - dy * along + ny * swing,
+      r,
+      a: angle + (body.twist * i * Math.PI) / 180,
+    });
   }
 
-  // The core. One bright dot, so a creature has a definite position even at
-  // the far end of a zoomed-out reef.
-  ctx.globalAlpha = alphaMul;
+  ctx.save();
+  ctx.lineJoin = "round";
+
+  // A halo around the head only, so a creature has weight without the whole
+  // body glowing into a smear.
+  ctx.globalAlpha = alphaMul * (0.09 + speedFrac * 0.15);
+  ctx.strokeStyle = entry.colour;
+  ctx.lineWidth = Math.max(1, layout.cell * 0.13);
+  primitivePath(ctx, body.of, centre.px, centre.py, head * 1.45, angle);
+  ctx.stroke();
+
+  // The body as one path with every segment in it, filled once. Canvas fills
+  // the *union* of the subpaths, so overlapping circles become a single
+  // silhouette with no seams where they meet — which is the whole reason the
+  // segments overlap this hard. A row of separately-filled shapes is a
+  // caterpillar; their union is a body.
+  ctx.globalAlpha = alphaMul * 0.3;
   ctx.fillStyle = entry.colour;
   ctx.beginPath();
-  ctx.arc(centre.px, centre.py, Math.max(1, r * 0.2), 0, Math.PI * 2);
+  for (const node of nodes) {
+    subPath(ctx, body.of, node.x, node.y, node.r, node.a);
+  }
+  ctx.fill();
+
+  // Then every segment's own outline over the top, faintly. The internal arcs
+  // are not a mistake to be cleaned up: they are what says this animal is
+  // built out of one shape repeated, which is the register the rest of the
+  // reef is drawn in.
+  ctx.globalAlpha = alphaMul * 0.38;
+  ctx.strokeStyle = entry.colour;
+  ctx.lineWidth = Math.max(0.7, layout.cell * 0.025);
+  ctx.beginPath();
+  for (const node of nodes) {
+    subPath(ctx, body.of, node.x, node.y, node.r, node.a);
+  }
+  ctx.stroke();
+
+  // The head, brighter, so a body has a front.
+  const headNode = nodes[0]!;
+  ctx.globalAlpha = alphaMul * 0.95;
+  ctx.lineWidth = Math.max(0.9, layout.cell * 0.045);
+  primitivePath(ctx, body.of, headNode.x, headNode.y, headNode.r, headNode.a);
+  ctx.stroke();
+
+  // The fin: strokes fanning off the last segment, swinging with the wave.
+  const tail = nodes[nodes.length - 1]!;
+  const previous = nodes[nodes.length - 2] ?? tail;
+  const backAngle = Math.atan2(tail.y - previous.y, tail.x - previous.x);
+  ctx.globalAlpha = alphaMul * 0.8;
+  ctx.strokeStyle = entry.colour;
+  ctx.lineWidth = Math.max(0.9, layout.cell * 0.04);
+  ctx.lineCap = "round";
+  const spread = 0.55;
+  ctx.beginPath();
+  for (let i = 0; i < body.fin; i += 1) {
+    const t = body.fin === 1 ? 0 : (i / (body.fin - 1)) * 2 - 1;
+    const a = backAngle + t * spread;
+    const reach = head * (1.35 + Math.abs(t) * 0.55);
+    ctx.moveTo(tail.x, tail.y);
+    ctx.lineTo(tail.x + Math.cos(a) * reach, tail.y + Math.sin(a) * reach);
+  }
+  ctx.stroke();
+
+  // An eye, on the head, offset to one side. Two pixels of dark and the
+  // difference between a shape moving and an animal looking where it goes.
+  ctx.globalAlpha = alphaMul * 0.8;
+  ctx.fillStyle = "rgba(4, 12, 18, 1)";
+  ctx.beginPath();
+  ctx.arc(
+    centre.px + dx * head * 0.36 + nx * head * 0.3,
+    centre.py + dy * head * 0.36 + ny * head * 0.3,
+    Math.max(0.9, head * 0.15),
+    0,
+    Math.PI * 2,
+  );
   ctx.fill();
   ctx.restore();
 }
