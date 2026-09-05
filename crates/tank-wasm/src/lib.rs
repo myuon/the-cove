@@ -372,6 +372,16 @@ fn snapshot(tank: &Tank) -> String {
         world.height,
         simulation::world::hash(world)
     ));
+    // The world's own constants, because a page that wrote its own copy of one
+    // would be a page holding a rule in a second language. That has already
+    // happened once here -- `contract.cove` and the host disagreed about how
+    // far a wildcard sees, and nothing could have caught it -- and a full
+    // energy bar is exactly the shape of the next one.
+    out.push_str(&format!(
+        "\"maxEnergy\":{},\"respawnDelay\":{},",
+        simulation::world::MAX_ENERGY,
+        simulation::world::RESPAWN_DELAY
+    ));
     out.push_str(&format!(
         "\"births\":{},\"deaths\":{},\"refusals\":{},\"cast\":{},",
         world.births,
@@ -464,14 +474,18 @@ fn snapshot(tank: &Tank) -> String {
 /// one step away is in this object.
 fn focus(tank: &Tank, ask: &Ask) -> String {
     let mut out = String::with_capacity(1024);
-    let creature = tank.world.creatures.iter().find(|c| c.id == ask.id);
     let outcome = tank.last.iter().find(|o| o.id == ask.id);
     let result = outcome.map(|o| o.result.name()).unwrap_or_default();
     // The sentence the world wrote when it declined an intent. It is the
     // whole of the "invalid decision" case a visitor can be shown, and
     // without it a refusal is a word with no reason attached to it.
     let refusal = outcome.and_then(|o| o.result.refusal());
-    let species = creature.map(|c| c.species).unwrap_or(0);
+    // Read off the `SelfView` the creature was handed, and not off the world.
+    // A creature that died this tick is not in the world any more, and looking
+    // for it there gave every dead creature species zero -- so the panel a
+    // visitor was watching when their fish starved renamed it to whatever
+    // species zero happens to be. The invocation knows what it was.
+    let species = ask.asked.view.species.max(0) as usize;
     out.push_str(&format!(
         "{{\"id\":{},\"species\":{},\"tick\":{},",
         ask.id, species, ask.asked.observation.tick

@@ -9,7 +9,7 @@
 import { isCover } from "./cover.js";
 import { cellCentre, type Layout } from "./layout.js";
 import { drawShape, headingAngleOf, radiusOf } from "./shapes.js";
-import type { CatalogEntry, Snapshot } from "./snapshot.js";
+import type { CatalogEntry, FocusSnapshot, Snapshot } from "./snapshot.js";
 import type { DrawnCreature, Departed } from "./interpolate.js";
 
 /** A departed creature, plus the real time its death marker started fading. */
@@ -26,6 +26,18 @@ export const DEPARTED_MS = 700;
 export interface Flash {
   readonly kind: "ate" | "hunted" | "spawned";
   readonly startedAt: number;
+}
+
+/**
+ * What the inspector is watching, for the one creature this affects how the
+ * reef itself is drawn: a clear ring around it, everything else dimmed a
+ * touch so the eye goes to it without the rest disappearing, and — only
+ * with `debug` on — the raw cost of the tick it just decided.
+ */
+export interface Selection {
+  readonly id: number | null;
+  readonly focus: FocusSnapshot | null;
+  readonly debug: boolean;
 }
 
 const FLOOR = "#0e2f38";
@@ -61,6 +73,7 @@ export function render(
   departed: readonly DepartedMarker[],
   flashes: ReadonlyMap<number, Flash>,
   now: number,
+  selection: Selection,
 ): void {
   ctx.clearRect(0, 0, cssWidth, cssHeight);
   drawFloor(ctx, layout, snapshot.width, snapshot.height);
@@ -68,7 +81,23 @@ export function render(
   drawCover(ctx, layout, snapshot.width, snapshot.height);
   drawDeparted(ctx, layout, departed, now);
   for (const creature of creatures) {
-    drawCreature(ctx, layout, snapshot.catalog, creature, flashes.get(creature.id), now);
+    const selected = creature.id === selection.id;
+    drawCreature(
+      ctx,
+      layout,
+      snapshot.catalog,
+      creature,
+      flashes.get(creature.id),
+      now,
+      // Dimmed whenever somebody else is selected, not whenever nobody is:
+      // with no selection at all, every creature reads at full weight, the
+      // way the tank always has.
+      selection.id !== null && !selected,
+      selected,
+      selected && selection.debug && selection.focus
+        ? `${selection.focus.instructions}i ${selection.focus.fuel}f`
+        : null,
+    );
   }
 }
 
@@ -213,6 +242,9 @@ function drawCreature(
   creature: DrawnCreature,
   flash: Flash | undefined,
   now: number,
+  dimmed: boolean,
+  selected: boolean,
+  debugText: string | null,
 ): void {
   const entry = catalog[creature.species];
   if (!entry) {
@@ -226,8 +258,10 @@ function drawCreature(
   ctx.save();
   // A hidden creature reads as hidden: faint and outline-only, rather than
   // gone — the point of cover is that a visitor can still see who is using
-  // it, only a hunter cannot.
-  ctx.globalAlpha = creature.hidden ? 0.4 : 1;
+  // it, only a hunter cannot. Dimming for a selection stacks on top of that
+  // rather than replacing it, so a hidden creature that is not the one
+  // selected reads as both at once.
+  ctx.globalAlpha = (creature.hidden ? 0.4 : 1) * (dimmed ? 0.35 : 1);
   drawShape(
     ctx,
     entry.shape,
@@ -239,6 +273,23 @@ function drawCreature(
     creature.hidden,
   );
   ctx.restore();
+
+  if (selected) {
+    ctx.save();
+    ctx.strokeStyle = "#ffe27a";
+    ctx.lineWidth = Math.max(1.5, layout.cell * 0.07);
+    ctx.beginPath();
+    ctx.arc(px, py, radius + layout.cell * 0.22, 0, Math.PI * 2);
+    ctx.stroke();
+    if (debugText) {
+      ctx.font = `${Math.max(9, Math.round(layout.cell * 0.3))}px monospace`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillStyle = "#ffe27a";
+      ctx.fillText(debugText, px, py - radius - layout.cell * 0.28);
+    }
+    ctx.restore();
+  }
 
   if (flash) {
     const age = now - flash.startedAt;

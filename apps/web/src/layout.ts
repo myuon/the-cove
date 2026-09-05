@@ -55,3 +55,37 @@ export function cellCentre(
     py: layout.offsetY + (y + 0.5) * layout.cell,
   };
 }
+
+/**
+ * `base` (whatever `computeLayout` fit the whole grid into), re-centred on
+ * `(cameraX, cameraY)` in grid units and scaled by `zoom` around that point.
+ *
+ * The result is still a `Layout` — a cell size and an origin — so every
+ * drawing function that takes one keeps working unchanged; the camera is
+ * `main.ts`'s idea of where to look, and this is what it costs the grid's
+ * own coordinate system. Cells fully off-canvas are neither an error nor
+ * special-cased: a caller draws all of them and the canvas clips what does
+ * not fit, the same as it always has.
+ *
+ * `zoom = 1` centred on the grid's own centre reproduces `base` exactly —
+ * `computeLayout`'s offset is `(canvasSize - cell * gridSize) / 2`, which is
+ * `canvasSize / 2 - cell * (gridSize / 2)`, the same arithmetic this
+ * function does with `cameraX = gridSize / 2`. That is what lets `main.ts`
+ * run every frame through this function rather than branching on whether
+ * the camera is following anything.
+ */
+export function zoomedLayout(
+  base: Layout,
+  canvasWidth: number,
+  canvasHeight: number,
+  zoom: number,
+  cameraX: number,
+  cameraY: number,
+): Layout {
+  const cell = base.cell * zoom;
+  return {
+    cell,
+    offsetX: canvasWidth / 2 - cameraX * cell,
+    offsetY: canvasHeight / 2 - cameraY * cell,
+  };
+}

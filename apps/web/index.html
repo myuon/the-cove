@@ -26,6 +26,23 @@
     display: block;
     min-width: 0;
   }
+  /* The inspector is its own column and not a section of the panel. It was a
+     section, and the third layer -- the Cove source, which is what the whole
+     product is for -- sat five hundred pixels below the fold of a scrolling
+     sidebar with nothing to say it was there. */
+  #inspector {
+    flex: 0 0 330px;
+    order: 1;
+    height: 100vh;
+    box-sizing: border-box;
+    overflow-y: auto;
+    background: #06171d;
+    border-left: 1px solid rgba(255, 255, 255, 0.12);
+    padding: 16px 16px 24px;
+    color: #e8f4f2;
+    font-size: 13px;
+    line-height: 1.45;
+  }
   #panel {
     flex: 0 0 300px;
     order: -1;
@@ -45,8 +62,13 @@
   }
   /* On a narrow screen the panel goes under the tank rather than squeezing
      it: the reef is what the page is for. */
+  @media (max-width: 1100px) {
+    #inspector { flex: 0 0 280px; }
+  }
   @media (max-width: 720px) {
     body { flex-direction: column; }
+    #inspector { flex: 0 0 auto; height: auto; border-left: none;
+                 border-top: 1px solid rgba(255, 255, 255, 0.12); }
     #panel { flex: 0 0 auto; order: 1; height: auto; border-right: none;
              border-top: 1px solid rgba(255, 255, 255, 0.12); }
     #tank { flex: 1 1 auto; }
@@ -115,6 +137,85 @@
     opacity: 0.55;
     font-size: 11px;
   }
+
+  /* --- The inspector: click a creature and everything below appears. --- */
+  #inspWho {
+    margin: 0 0 6px;
+    font-weight: 600;
+    opacity: 0.85;
+  }
+  #inspHeadline {
+    margin: 0 0 4px;
+  }
+  #inspHeadline.dead {
+    color: #ff9a86;
+  }
+  #inspNote {
+    margin: 0 0 10px;
+    opacity: 0.75;
+  }
+  #inspNote:empty {
+    display: none;
+  }
+  .energybar {
+    height: 8px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+  .energybar-fill {
+    height: 100%;
+    /* Coloured by `main.ts`, not here: the same bar reads as fine, low, or
+       nearly dead, and the colour is part of that reading. */
+    background: #5fbf8f;
+  }
+  .tiny {
+    font-size: 11px;
+    opacity: 0.55;
+    margin: 6px 0;
+  }
+  #inspToggles {
+    display: flex;
+    gap: 14px;
+    margin: 10px 0;
+  }
+  #inspToggles label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+  }
+  #inspDebugLine[hidden] {
+    display: none;
+  }
+  #inspCove summary {
+    cursor: pointer;
+    margin: 4px 0;
+    opacity: 0.85;
+  }
+  #inspSource {
+    max-height: 220px;
+    overflow-y: auto;
+    background: rgba(0, 0, 0, 0.35);
+    border-radius: 6px;
+    padding: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre;
+  }
+  #inspSource .line.hl {
+    background: rgba(255, 226, 122, 0.28);
+    box-shadow: inset 3px 0 0 #ffe27a;
+  }
+  #inspTrace {
+    margin: 4px 0 0;
+    padding-left: 18px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    opacity: 0.85;
+  }
 </style>
 </head>
 <body>
@@ -141,7 +242,34 @@
     <dt>Failures</dt><dd id="statFailures">–</dd>
   </dl>
   <ul id="legend"></ul>
-  <p id="hint">Space to pause. The hatched cells are kelp: a creature can hide there, and a hunter will not follow prey in.</p>
+  <p id="hint">Space to pause. The hatched cells are kelp: a creature can hide there, and a hunter will not follow prey in. Click a creature to inspect it.</p>
+
+</div>
+<div id="inspector" hidden>
+  <p id="inspWho"></p>
+  <p id="inspHeadline"></p>
+  <p id="inspNote"></p>
+  <div class="energybar"><div id="inspEnergyFill" class="energybar-fill"></div></div>
+  <dl>
+    <dt>Energy</dt><dd id="inspEnergy">–</dd>
+    <dt>Age</dt><dd id="inspAge">–</dd>
+    <dt>Doing</dt><dd id="inspDoing">–</dd>
+    <dt>Remembers</dt><dd id="inspMemory">–</dd>
+  </dl>
+  <p class="tiny">This world has no separate health: a creature dies when its energy reaches zero.</p>
+  <p id="inspDebugLine" class="tiny" hidden></p>
+  <div id="inspToggles">
+    <label><input type="checkbox" id="followToggle" /> Follow</label>
+    <label><input type="checkbox" id="debugToggle" /> Debug</label>
+  </div>
+  <details id="inspCove">
+    <summary>Cove</summary>
+    <p class="tiny">The whole source this species decides with. The highlighted line is wherever its text names this reason — a text match, not a compiler span.</p>
+    <pre id="inspSource"></pre>
+    <p class="tiny" id="inspInvocationCaption">The runtime's own record of this one call, for this creature, this tick.</p>
+    <dl id="inspInvocation"></dl>
+    <ol id="inspTrace"></ol>
+  </details>
 </div>
 <script type="module" src="dist/main.js"></script>
 </body>

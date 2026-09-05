@@ -110,8 +110,21 @@ pub const SIGHT_LIMIT: usize = 4;
 pub const HEADINGS: [Heading; 4] = [Heading::North, Heading::East, Heading::South, Heading::West];
 
 /// How many cells grow by one each tick.
+///
+/// Proportional to the reef, so a bigger world is a bigger world rather than a
+/// hungrier one, and growth is a property of the reef rather than of who is
+/// eating it.
+///
+/// The divisor was sixteen while a world was a population of sixty to
+/// seventy-eight, and it is sixty-four now that a world is a cast of ten. Ten
+/// creatures eat at most ten cells a tick and usually far fewer, so twelve
+/// cells of growth on a hundred and ninety-two filled the reef to its ceiling
+/// and left it there: by the three hundredth tick every cell held four food
+/// and the tank was a flat green rectangle. That is not only ugly. A creature
+/// that says it is "seeking food" on a reef where food is everywhere is a
+/// creature whose reason means nothing, and the reason is the product.
 pub fn sprouts(cells: i64) -> i64 {
-    cells / 16
+    (cells / 64).max(1)
 }
 
 /// What a hunter gains from prey worth `victim_energy` at the tick's start,

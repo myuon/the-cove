@@ -120,6 +120,38 @@ without opening a source file.
 scales how much real time the accumulator is fed rather than the tick
 interval itself), and "new world".
 
+**The inspector** (`src/sentence.ts`, `src/highlight.ts`, `src/camera.ts`,
+`src/pick.ts`, wired up in `src/main.ts`). Clicking a creature selects it — a
+clear ring, everything else dimmed a touch — and opens a panel with three
+layers, each readable on its own:
+
+1. **Plain language.** One sentence built only from what `tank_focus()`'s
+   `observation` carried the creature that tick — the whole of what it could
+   have reasoned from — plus a second sentence when the world did something
+   other than what was asked (blocked, refused, or the invocation never
+   reached a `Decision` at all). `src/sentence.ts`'s `buildSentence` is the
+   pure function this is, and it is what `test/inspector.test.mjs` spends
+   most of its lines on.
+2. **State.** Energy (a bar as well as a number — this world has no separate
+   health, and the caption says so once), age, what it is doing, and what it
+   remembers (`self.memory`: what the world did with *last* tick's intent,
+   the only thing that carries between two ticks).
+3. **Cove.** Collapsed by default: the species' whole `creature.cove`
+   (`tank_source()`, fetched once per species and cached), with the line
+   naming this tick's reason highlighted — a text search for
+   `Reason.<Variant>`, captioned as exactly that and not a compiler span —
+   and the invocation itself: id, tick, instructions, fuel, and the
+   runtime's own trace, in order.
+
+A creature that dies while selected does not blank the panel: the headline
+becomes "This creature was hunted/starved on tick N" (which of the two is
+read off the survivors' own `result` fields, the same data a visitor could
+check by hand, rather than invented) and everything below holds its last
+live state. **Follow** eases the camera to 2× on the selected creature rather
+than snapping, and turns itself off — reverting the camera, not the toggle —
+the moment there is nothing left to follow. **Debug** adds this decision's
+raw instruction and fuel counts to the panel and to the on-canvas ring.
+
 ## What was not verified in a browser
 
 This was built and checked without ever opening one — Node has no DOM, no
@@ -127,14 +159,25 @@ canvas, and no `requestAnimationFrame`. What Node verified: the wasm module
 instantiates and runs (via `check.mjs` and an ad hoc HTTP-served run of
 `loadTank` during development), the TypeScript compiles clean under `strict`,
 and every pure function the loop, layout and renderer are built from —
-`computeLayout`, `interpolateCreatures`, `departedCreatures`, `advance`,
-`alphaOf`, `isCover`, `headingAngleOf`, `radiusOf`, the rolling averages — is
-exercised by `test/*.test.mjs`, including a 200-tick run confirming every
-departure `departedCreatures` reports matches the snapshot's own death count
-and that `ate`, `hunted`, and `spawned` all actually occur and are detected.
+`computeLayout`, `zoomedLayout`, `interpolateCreatures`, `departedCreatures`,
+`advance`, `alphaOf`, `isCover`, `headingAngleOf`, `radiusOf`, the rolling
+averages, `buildSentence`, `reasonWord`, `memoryWord`, `highlightedLines`,
+`easeCamera`, `pickCreature` — is exercised by `test/*.test.mjs`, including a
+200-tick run confirming every departure `departedCreatures` reports matches
+the snapshot's own death count, that `ate`, `hunted`, and `spawned` all
+actually occur and are detected, and a from-`dist/` run of `tank_focus` /
+`tank_source` against the real wasm module driving `buildSentence` and
+`highlightedLines` end to end (see the task notes for the sentences a real
+run produced — one per `reason`, plus the `refusal` and death-during-watch
+cases, all captured from an actual `Ask`, none invented).
 
-What was **not** verified: that anything draws correctly on screen, that the
-panel's DOM updates read cleanly, that resize/devicePixelRatio scaling looks
-right, that the space bar and buttons work under real event dispatch, that
-60 FPS holds in a real event loop, or that the legend's per-species `<canvas>`
-swatches render the right shape. All of that needs an actual browser.
+What was **not** verified: that anything draws correctly on screen — the
+selection ring, the dimming, the energy bar, the highlighted source line, the
+`<details>` collapse/expand and its scroll-into-view — that the panel's DOM
+updates read cleanly, that resize/devicePixelRatio scaling looks right, that
+clicking a creature (or the reef around it) dispatches and hits what it
+should under a real pointer event, that Follow's easing looks like easing
+rather than a stutter, that the space bar and buttons work under real event
+dispatch, that 60 FPS holds in a real event loop, or that the legend's
+per-species `<canvas>` swatches render the right shape. All of that needs an
+actual browser.

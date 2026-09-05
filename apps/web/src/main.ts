@@ -3,14 +3,16 @@
 // This file is the only thing here that is not a pure function of its
 // arguments — it owns the wasm instance, the DOM, and the clock. Everything
 // it could delegate to a pure module (`layout.ts`, `interpolate.ts`,
-// `loop.ts`, `shapes.ts`) it does; what is left is wiring.
+// `loop.ts`, `shapes.ts`, `sentence.ts`, `highlight.ts`, `camera.ts`,
+// `pick.ts`) it does; what is left is wiring.
 
 import { loadTank } from "./tank.js";
-import { computeLayout } from "./layout.js";
+import { computeLayout, zoomedLayout } from "./layout.js";
 import {
   interpolateCreatures,
   departedCreatures,
   type Departed,
+  type DrawnCreature,
 } from "./interpolate.js";
 import { advance, alphaOf } from "./loop.js";
 import {
@@ -19,11 +21,16 @@ import {
   DEPARTED_MS,
   type Flash,
   type DepartedMarker,
+  type Selection,
 } from "./renderer.js";
 import { drawShape, radiusOf } from "./shapes.js";
 import { RollingAverage, DecisionRate } from "./panel.js";
 import { SPECIES_SUMMARY } from "./legend.js";
-import type { Snapshot } from "./snapshot.js";
+import { buildSentence, reasonWord, memoryWord } from "./sentence.js";
+import { highlightedLines } from "./highlight.js";
+import { clampCamera, easeCamera, type Camera } from "./camera.js";
+import { pickCreature } from "./pick.js";
+import type { FocusSnapshot, Snapshot } from "./snapshot.js";
 
 // The reef this page presents. Fixed rather than read from the window,
 // because a shared seed has to mean a shared world: `crates/simulation/src/
@@ -43,6 +50,13 @@ const DEFAULT_SEED = 7;
 // of these steps, not dozens: six a second is paced to that, not to 60 FPS
 // rendering, which stays separate on purpose (see `loop.ts`).
 const TICK_MS = 1000 / 6;
+
+// How following eases: the real milliseconds in which half the remaining
+// distance to the followed creature closes. Not tied to `TICK_MS` or
+// `speed` — a visitor watching one animal live should see the camera settle
+// at the same real-world pace whether the tank is paused, at 1x, or at 4x.
+const CAMERA_HALF_LIFE_MS = 200;
+const FOLLOW_ZOOM = 2;
 
 function must<T extends Element>(id: string): T {
   const el = document.getElementById(id);
@@ -76,6 +90,12 @@ function writeSeedToUrl(seed: number): void {
 
 function randomSeed(): number {
   return Math.floor(Math.random() * 0x100000000) >>> 0;
+}
+
+/** Why the world stopped asking a watched creature anything at all. */
+interface DeathNotice {
+  readonly tick: number;
+  readonly cause: "hunted" | "starved";
 }
 
 async function main(): Promise<void> {
@@ -112,6 +132,35 @@ async function main(): Promise<void> {
   const decisionRate = new DecisionRate();
   let lastTickAt = performance.now();
 
+  // --- The inspector's own state. `selectedId` survives ticks and worlds by
+  // id, not by array position — the same reason `interpolate.ts` matches
+  // creatures that way. `lastFocus` is the one exception to "read straight
+  // off the current snapshot": it is deliberately allowed to go stale, which
+  // is what lets the panel hold a creature's last state after it dies rather
+  // than blank the moment `focus` itself goes `null`. ---
+  let selectedId: number | null = null;
+  let lastFocus: FocusSnapshot | null = null;
+  let deathNotice: DeathNotice | null = null;
+  let follow = false;
+  let debugOn = false;
+  // Every species whose catalog name a visitor has earned, by having seen
+  // one of it alive on the reef — not merely listed in the legend, which
+  // names all four before anybody has looked at the tank at all. Kept
+  // across "new world": a visitor who has met a Kelp Hunter does not forget
+  // it because the seed changed.
+  const metSpecies = new Set<number>();
+  // `creature.cove` is the same text for a species on every tick and every
+  // world this module ever opens (it is compiled in, not read off a disk
+  // that could change) — fetched once per species and never invalidated.
+  const sourceCache = new Map<number, string>();
+
+  let camera: Camera = { x: WIDTH / 2, y: HEIGHT / 2, zoom: 1 };
+  // What the last drawn frame actually put on screen, for the click handler
+  // to test hits against — the same positions a visitor is looking at,
+  // including mid-tween, rather than the last snapshot's grid coordinates.
+  let currentLayout = computeLayout(0, 0, WIDTH, HEIGHT, 16);
+  let currentDrawn: readonly DrawnCreature[] = [];
+
   // The canvas is sized from the box it is laid out in and not from the
   // window, because the panel sits beside it rather than over it. A tank the
   // window's size with a panel drawn on top of it is a tank whose left-hand
@@ -125,11 +174,18 @@ async function main(): Promise<void> {
     cssHeight = canvas.clientHeight;
     canvas.width = Math.round(cssWidth * dpr);
     canvas.height = Math.round(cssHeight * dpr);
-    canvas.style.width = `${cssWidth}px`;
-    canvas.style.height = `${cssHeight}px`;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
-  window.addEventListener("resize", resize);
+
+  // A `ResizeObserver` and not the window's `resize` event, and the canvas is
+  // never given an explicit CSS width. Both were wrong the first time and both
+  // showed up as the same symptom: opening the inspector takes three hundred
+  // pixels away from the tank without the window changing size at all, so no
+  // resize event fires, the backing store keeps the width it had, and the
+  // browser stretches it to fit. Every circle on the reef became an ellipse
+  // and the whole world was squashed sideways — which reads as a bug in the
+  // drawing and is a bug in the sizing.
+  new ResizeObserver(resize).observe(canvas);
   resize();
 
   function applyFreshSnapshot(fresh: Snapshot, isFirst: boolean): void {
@@ -149,6 +205,7 @@ async function main(): Promise<void> {
       if (kind) {
         flashes.set(creature.id, { kind, startedAt: now });
       }
+      metSpecies.add(creature.species);
     }
     for (const [id, flash] of flashes) {
       if (now - flash.startedAt > FLASH_MS) {
@@ -167,6 +224,7 @@ async function main(): Promise<void> {
     prevSnapshot = currSnapshot;
     currSnapshot = fresh;
     updateStats(fresh);
+    updateInspector();
   }
 
   function stepOnce(): void {
@@ -186,6 +244,14 @@ async function main(): Promise<void> {
     fuelAvg.reset();
     microsAvg.reset();
     decisionRate.reset();
+    // A world's creature ids start over at 1, so a selection from the last
+    // one names nobody in this one.
+    selectedId = null;
+    lastFocus = null;
+    deathNotice = null;
+    camera = { x: WIDTH / 2, y: HEIGHT / 2, zoom: 1 };
+    loadedSourceSpecies = null;
+    highlightedReason = null;
     writeSeedToUrl(seed);
     // One snapshot, handed to both: `tank_snapshot()` is called at most once
     // per tick everywhere else in this file, and opening a tank is still a
@@ -262,6 +328,246 @@ async function main(): Promise<void> {
     );
   }
 
+  // --- The inspector ---
+  const inspector = must<HTMLDivElement>("inspector");
+  const inspWho = must<HTMLElement>("inspWho");
+  const inspHeadline = must<HTMLElement>("inspHeadline");
+  const inspNote = must<HTMLElement>("inspNote");
+  const inspEnergyFill = must<HTMLElement>("inspEnergyFill");
+  const inspEnergy = must<HTMLElement>("inspEnergy");
+  const inspAge = must<HTMLElement>("inspAge");
+  const inspDoing = must<HTMLElement>("inspDoing");
+  const inspMemory = must<HTMLElement>("inspMemory");
+  const inspDebugLine = must<HTMLElement>("inspDebugLine");
+  const followToggle = must<HTMLInputElement>("followToggle");
+  const debugToggle = must<HTMLInputElement>("debugToggle");
+  const inspCove = must<HTMLDetailsElement>("inspCove");
+  const inspSource = must<HTMLPreElement>("inspSource");
+  const inspInvocation = must<HTMLDListElement>("inspInvocation");
+  const inspTrace = must<HTMLOListElement>("inspTrace");
+
+  followToggle.addEventListener("change", () => {
+    follow = followToggle.checked;
+  });
+  debugToggle.addEventListener("change", () => {
+    debugOn = debugToggle.checked;
+    renderInspectorContent();
+  });
+
+  // Which species' text is currently sitting in `inspSource`, and which
+  // reason its lines are last highlighted for — both `null` until a
+  // creature is first selected, and both reset whenever a new world starts
+  // (the DOM element is the same one; the content in it is not, once a
+  // fresh selection loads a species).
+  let loadedSourceSpecies: number | null = null;
+  let sourceLineEls: HTMLElement[] = [];
+  let highlightedReason: string | null = null;
+
+  inspCove.addEventListener("toggle", () => {
+    if (inspCove.open) {
+      sourceLineEls
+        .find((el) => el.classList.contains("hl"))
+        ?.scrollIntoView({ block: "center" });
+    }
+  });
+
+  function sourceFor(species: number): string {
+    let text = sourceCache.get(species);
+    if (text === undefined) {
+      text = tank.source(species);
+      sourceCache.set(species, text);
+    }
+    return text;
+  }
+
+  function renderSource(focus: FocusSnapshot): void {
+    if (loadedSourceSpecies !== focus.species) {
+      const text = sourceFor(focus.species);
+      inspSource.replaceChildren(
+        ...text.split("\n").map((line) => {
+          const el = document.createElement("div");
+          el.className = "line";
+          // A blank line still needs height to keep every later line number
+          // aligned with where it actually is in the file.
+          el.textContent = line.length > 0 ? line : " ";
+          return el;
+        }),
+      );
+      sourceLineEls = Array.from(inspSource.children) as HTMLElement[];
+      loadedSourceSpecies = focus.species;
+      highlightedReason = null; // force the highlight below to reapply
+    }
+
+    if (focus.reason !== highlightedReason) {
+      const hits = new Set(
+        highlightedLines(sourceFor(focus.species), focus.reason),
+      );
+      let first: HTMLElement | null = null;
+      for (const [index, el] of sourceLineEls.entries()) {
+        const hit = hits.has(index);
+        el.classList.toggle("hl", hit);
+        if (hit && !first) {
+          first = el;
+        }
+      }
+      if (first && inspCove.open) {
+        first.scrollIntoView({ block: "center" });
+      }
+      highlightedReason = focus.reason;
+    }
+  }
+
+  function renderInvocation(focus: FocusSnapshot): void {
+    const rows: ReadonlyArray<readonly [string, string]> = [
+      ["Creature", `#${focus.id}`],
+      ["Tick", String(focus.tick)],
+      ["Instructions", String(focus.instructions)],
+      ["Fuel", String(focus.fuel)],
+    ];
+    inspInvocation.replaceChildren(
+      ...rows.flatMap(([key, value]) => {
+        const dt = document.createElement("dt");
+        dt.textContent = key;
+        const dd = document.createElement("dd");
+        dd.textContent = value;
+        return [dt, dd];
+      }),
+    );
+    inspTrace.replaceChildren(
+      ...focus.trace.map((line) => {
+        const li = document.createElement("li");
+        li.textContent = line;
+        return li;
+      }),
+    );
+  }
+
+  function renderInspectorContent(): void {
+    const focus = lastFocus;
+    if (!focus || !currSnapshot) {
+      return;
+    }
+    const entry = currSnapshot.catalog[focus.species];
+    inspWho.textContent = `${entry?.name ?? `species ${focus.species}`} #${focus.id}`;
+
+    if (deathNotice) {
+      inspHeadline.textContent =
+        deathNotice.cause === "hunted"
+          ? `This creature was hunted on tick ${deathNotice.tick}.`
+          : `This creature starved on tick ${deathNotice.tick}.`;
+      inspHeadline.classList.add("dead");
+      inspNote.textContent = "";
+    } else {
+      const sentence = buildSentence(focus, currSnapshot.catalog, metSpecies);
+      inspHeadline.textContent = sentence.headline;
+      inspHeadline.classList.remove("dead");
+      inspNote.textContent = sentence.note ?? "";
+    }
+
+    const fraction = Math.max(
+      0,
+      // The world's own constant, read off the snapshot rather than mirrored
+      // here. A rule held in a second language is a rule that drifts, and this
+      // project has had that happen once already: `contract.cove` and the host
+      // disagreed about how far a wildcard sees, and nothing could have caught
+      // it. A full energy bar is exactly the shape of the next one.
+      Math.min(1, focus.self.energy / (currSnapshot?.maxEnergy ?? 1)),
+    );
+    inspEnergyFill.style.width = `${Math.round(fraction * 100)}%`;
+    inspEnergyFill.style.background =
+      fraction < 0.2 ? "#d4553c" : fraction < 0.5 ? "#e0b23c" : "#5fbf8f";
+    inspEnergy.textContent = String(focus.self.energy);
+    inspAge.textContent = String(focus.self.age);
+    inspDoing.textContent = reasonWord(focus.reason);
+    inspMemory.textContent = memoryWord(focus.self.memory);
+
+    inspDebugLine.hidden = !debugOn;
+    if (debugOn) {
+      inspDebugLine.textContent = `This decision: ${focus.instructions} instructions, ${focus.fuel} fuel.`;
+    }
+
+    renderSource(focus);
+    renderInvocation(focus);
+  }
+
+  /**
+   * Reconciles the inspector with whatever `currSnapshot` just became —
+   * called after every tick and after every selection change, since either
+   * one can change what `focus` says.
+   *
+   * The order matters: a creature that dies this tick is missing from
+   * `creatures` but *is* still in `focus` (the tank asked it one last time
+   * before resolving the tick that killed it — `crates/tank-wasm/src/
+   * lib.rs`'s `decisions()` asks everyone alive when the tick starts, and
+   * this one was), so `lastFocus` is updated with its final decision before
+   * `deathNotice` is computed from its absence.
+   */
+  function updateInspector(): void {
+    if (selectedId === null) {
+      inspector.hidden = true;
+      return;
+    }
+    inspector.hidden = false;
+    const snap = currSnapshot;
+    if (!snap) {
+      return;
+    }
+    if (snap.focus && snap.focus.id === selectedId) {
+      lastFocus = snap.focus;
+    }
+    const stillAlive = snap.creatures.some((c) => c.id === selectedId);
+    if (!stillAlive && !deathNotice) {
+      // The world does not record *why* a creature disappeared against its
+      // own id — only the hunter's own result says who it caught. A watched
+      // creature absent from this tick's cast and not named by any
+      // `hunted-{id}` among the survivors ran out of energy instead; those
+      // are the only two ways `crates/simulation/src/world.rs`'s `resolve`
+      // removes one.
+      const caught = snap.creatures.some(
+        (c) => c.result === `hunted-${selectedId}`,
+      );
+      deathNotice = { tick: snap.tick, cause: caught ? "hunted" : "starved" };
+    }
+    renderInspectorContent();
+  }
+
+  function selectCreature(id: number): void {
+    selectedId = id;
+    deathNotice = null;
+    lastFocus = null;
+    tank.focus(id);
+    // The snapshot already on hand is this tick's; only its `focus` field
+    // is stale (it named whoever — or nobody — was watched before this
+    // click). Re-reading it costs nothing a fresh tick would not have cost
+    // anyway and does not touch the rolling averages `applyFreshSnapshot`
+    // feeds — those stay keyed to actual ticks, not to clicks.
+    currSnapshot = tank.snapshot();
+    updateInspector();
+  }
+
+  function clearSelection(): void {
+    selectedId = null;
+    deathNotice = null;
+    lastFocus = null;
+    tank.focus(-1);
+    currSnapshot = tank.snapshot();
+    inspector.hidden = true;
+  }
+
+  canvas.addEventListener("click", (event) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const hit = currSnapshot
+      ? pickCreature(x, y, currentLayout, currentDrawn, currSnapshot.catalog)
+      : null;
+    if (hit !== null) {
+      selectCreature(hit);
+    } else {
+      clearSelection();
+    }
+  });
+
   // --- Controls ---
   const playPause = must<HTMLButtonElement>("playPause");
   playPause.addEventListener("click", () => setPaused(!paused));
@@ -314,8 +620,45 @@ async function main(): Promise<void> {
 
     if (currSnapshot) {
       const alpha = paused ? 1 : alphaOf(carry, TICK_MS);
-      const layout = computeLayout(cssWidth, cssHeight, WIDTH, HEIGHT, 16);
+      const base = computeLayout(cssWidth, cssHeight, WIDTH, HEIGHT, 16);
       const drawn = interpolateCreatures(prevSnapshot, currSnapshot, alpha);
+
+      // The camera eases in real time (`dt`, never `dt * speed`) towards
+      // whichever creature Follow is watching, or back to the grid's own
+      // centre at `zoom: 1` when it is not — the same target regardless of
+      // *why* nothing is followed, whether Follow is off or the followed
+      // creature just died and vanished from `drawn`.
+      const followed =
+        follow && selectedId !== null
+          ? drawn.find((c) => c.id === selectedId)
+          : undefined;
+      const target: Camera = followed
+        ? { x: followed.x + 0.5, y: followed.y + 0.5, zoom: FOLLOW_ZOOM }
+        : { x: WIDTH / 2, y: HEIGHT / 2, zoom: 1 };
+      camera = clampCamera(
+        easeCamera(camera, target, dt, CAMERA_HALF_LIFE_MS),
+        WIDTH,
+        HEIGHT,
+        cssWidth,
+        cssHeight,
+        base.cell,
+      );
+      const layout = zoomedLayout(
+        base,
+        cssWidth,
+        cssHeight,
+        camera.zoom,
+        camera.x,
+        camera.y,
+      );
+      currentLayout = layout;
+      currentDrawn = drawn;
+
+      const selection: Selection = {
+        id: selectedId,
+        focus: lastFocus,
+        debug: debugOn,
+      };
       render(
         ctx,
         cssWidth,
@@ -326,6 +669,7 @@ async function main(): Promise<void> {
         departedMarkers,
         flashes,
         now,
+        selection,
       );
     }
     requestAnimationFrame(frame);
