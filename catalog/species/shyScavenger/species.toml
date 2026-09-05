@@ -1,0 +1,28 @@
+# One catalog entry. The Cove source beside this file is what it decides; this
+# is what the world costs it and what the tank draws it as.
+#
+# Every number here was chosen by running the thing. There is no rule to derive
+# them from, and the one that matters most is `capacity`, which decides how
+# many slots of a world this species may take.
+
+id = "shyScavenger"
+name = "Shy Scavenger"
+role = "Scavenger"
+
+[traits]
+# What one starts with.
+startingEnergy = 14
+# What a step costs on top of the one energy a tick costs everybody.
+stride = 0
+# What one unit of food is worth to this species.
+forage = 5
+# The most of this species the world holds at once: one per this many cells.
+capacity = 14
+
+[visual]
+colour = "#8c7ab8"
+# A shape as well as a colour, because a tank told apart by hue alone is a
+# tank a colour-blind visitor cannot read, and V0 says every species must be
+# visually distinguishable.
+shape = "ring"
+size = 3

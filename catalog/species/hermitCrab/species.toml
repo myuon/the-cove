@@ -1,0 +1,33 @@
+# One catalog entry. The Cove source beside this file is what it decides; this
+# is what the world costs it and what the tank draws it as.
+#
+# Every number here was chosen by running the thing. There is no rule to derive
+# them from, and the one that matters most is `capacity`, which decides how
+# many slots of a world this species may take.
+
+id = "hermitCrab"
+name = "Hermit Crab"
+role = "Wildcard"
+
+[traits]
+# What one starts with.
+startingEnergy = 16
+# What a step costs on top of the one energy a tick costs everybody.
+# Nothing. A crab spends most of its life stepping away from somebody, and a
+# crab that paid a grazer's price for that was gone by the three hundredth
+# tick of every seed. Its rule is what it is; what the catalog can do about
+# the cost of the rule is this.
+stride = 0
+# What one unit of food is worth to this species.
+# More than a grazer gets, because a crab eats far less often than one.
+forage = 7
+# The most of this species the world holds at once: one per this many cells.
+capacity = 25
+
+[visual]
+colour = "#e0b23c"
+# A shape as well as a colour, because a tank told apart by hue alone is a
+# tank a colour-blind visitor cannot read, and V0 says every species must be
+# visually distinguishable.
+shape = "spiral"
+size = 3

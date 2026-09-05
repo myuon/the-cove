@@ -1,0 +1,71 @@
+use contract.Decision
+use contract.Intent
+use contract.Observation
+use contract.Reason
+use contract.SelfView
+use instinct.away
+use instinct.nearest
+use instinct.richest
+use instinct.shelter
+use instinct.stepOr
+use instinct.threats
+use instinct.wander
+
+// The reef grazer: eats what grows, and runs from what eats it.
+//
+// It is the species the other two are defined against. It has no way to
+// defend itself and no reason to wait, so its rule is short and in this
+// order: with a hunter next to it, step into cover if there is any and away
+// from the hunter otherwise; eat what is underfoot; leave while the hunter is
+// still two cells off; and, with nothing to run from, walk towards the most
+// food it can see.
+//
+// The order is the whole of the species. Fleeing a hunter that is two cells
+// away rather than eating is what a grazer that never grows up does, and one
+// that ate with a hunter beside it is one that gets eaten.
+
+/// The one intent this grazer answers the tick with, and why.
+export fn decide(view: SelfView, observation: Observation) -> Decision {
+  let danger = nearest(threats(observation.nearby))
+  match danger {
+    Some(hunter) => if hunter.away < 2 {
+      return Decision(
+        intent: stepOr(
+          shelter(observation),
+          stepOr(away(hunter.at, observation), Intent.Rest),
+        ),
+        reason: Reason.FleeingThreat,
+      )
+    }
+    None => ()
+  }
+  if observation.here > 0 && view.energy < full() {
+    return Decision(intent: Intent.Eat, reason: Reason.Feeding)
+  }
+  match danger {
+    Some(hunter) => return Decision(
+      intent: stepOr(away(hunter.at, observation), Intent.Rest),
+      reason: Reason.FleeingThreat,
+    )
+    None => ()
+  }
+  match richest(observation) {
+    Some(patch) => Decision(
+      intent: Intent.Move(patch.heading),
+      reason: Reason.SeekingFood,
+    )
+    None => Decision(
+      intent: wander(view, observation),
+      reason: Reason.Exploring,
+    )
+  }
+}
+
+/// The energy past which a grazer stops eating and moves on.
+///
+/// A grazer that ate whatever it stood on would sit on one cell until the
+/// cell was bare, which is the behaviour of something that cannot count. This
+/// is the count.
+fn full() -> Int {
+  26
+}

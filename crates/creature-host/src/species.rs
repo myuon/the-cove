@@ -213,22 +213,25 @@ impl Species {
         })
     }
 
-    /// Builds one backend and hands it to `body`.
+    /// The place this species runs in: one runtime, one tape, and no backend
+    /// yet.
     ///
-    /// Every invocation `body` makes is served by that one `Vm`, which is
-    /// what compile-once/invoke-many means here. The closure is not a style
-    /// choice: a `Vm` borrows the `Runtime` and the lowered program, and
-    /// nothing Cove-shaped could leave it in any case — a `Value` is
-    /// `Rc`-based and is not `Send`.
-    pub fn serve<T>(&self, lowering: &Lowering, body: impl FnOnce(&mut Session<'_>) -> T) -> T {
+    /// A [`Habitat`] owns everything a session needs except the lowered
+    /// program, and owns it rather than borrowing it, so a caller may hold a
+    /// `Vec` of habitats and then build a `Vec` of sessions that borrow from
+    /// it. That is what a world of several species needs and what
+    /// [`Species::serve`] cannot give it: `serve` builds the runtime inside
+    /// itself, so four species would be four nested closures and the innermost
+    /// one would be the whole simulation.
+    pub fn habitat(&self) -> Habitat {
         let tape = Arc::new(Tape::new(Tape::DEFAULT_CAP));
         let mut hosts = HostRegistry::new(Grants::new(Vec::<String>::new()));
         hosts.set_trace(Arc::clone(&tape) as Arc<dyn TraceSink>);
         // Two sinks and not one, because there are two. The registry's is
         // where the Host API boundary reports; the runtime's is where the
         // entry and the end of the run report. A decision reaches no host, so
-        // the registry's should stay silent for ever -- which is exactly why
-        // it is installed: a species that somehow reached a host module would
+        // the registry's should stay silent for ever — which is exactly why it
+        // is installed: a species that somehow reached a host module would
         // show up on the tape rather than nowhere.
         let runtime = Runtime::new(
             Arc::clone(&self.program),
@@ -236,14 +239,49 @@ impl Species {
             Arc::new(hosts),
         )
         .with_trace(Arc::clone(&tape) as Arc<dyn TraceSink>);
-        let vm = Vm::new(&runtime, runtime.hosts(), &lowering.ir);
-        let mut session = Session {
-            vm,
-            hosts: runtime.hosts(),
+        Habitat {
+            runtime,
             sources: Arc::clone(&self.sources),
             tape,
-        };
+        }
+    }
+
+    /// Builds one backend and hands it to `body`.
+    ///
+    /// Every invocation `body` makes is served by that one `Vm`, which is what
+    /// compile-once/invoke-many means here. This is the shape one species
+    /// wants; [`Species::habitat`] is the shape a world of several wants.
+    /// Either way nothing Cove-shaped may leave a session: a `Value` is
+    /// `Rc`-based and is not `Send`.
+    pub fn serve<T>(&self, lowering: &Lowering, body: impl FnOnce(&mut Session<'_>) -> T) -> T {
+        let habitat = self.habitat();
+        let mut session = habitat.session(lowering);
         body(&mut session)
+    }
+}
+
+/// Where one species runs: its runtime, and the tape its invocations write to.
+///
+/// It exists so that the runtime and the backend can be two locals rather than
+/// one closure. A `Vm` borrows a `Runtime`, so a `Vec<Habitat>` built first and
+/// a `Vec<Session>` built from it second is an ordinary borrow and not a
+/// self-referential structure.
+pub struct Habitat {
+    runtime: Runtime,
+    sources: Arc<SourceMap>,
+    tape: Arc<Tape>,
+}
+
+impl Habitat {
+    /// One backend over `lowering`, ready to be invoked as many times as the
+    /// world has ticks.
+    pub fn session<'a>(&'a self, lowering: &'a Lowering) -> Session<'a> {
+        Session {
+            vm: Vm::new(&self.runtime, self.runtime.hosts(), &lowering.ir),
+            hosts: self.runtime.hosts(),
+            sources: Arc::clone(&self.sources),
+            tape: Arc::clone(&self.tape),
+        }
     }
 }
 

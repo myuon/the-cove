@@ -60,12 +60,24 @@ impl Role {
   }
 
   /// Whether a hunter will chase a creature in this role.
+  ///
+  /// A wildcard is not chased, and that is a rule about the world rather than
+  /// about any particular wildcard: whatever one-rule creature the catalog
+  /// puts in this role, its rule is the point of it, and a creature that is
+  /// eaten before its rule has been seen is a creature that was not worth
+  /// writing. The first one had a shell, which is where the phrasing comes
+  /// from and is also literally true of it.
+  ///
+  /// It was measured rather than assumed. The hermit crab was extinct by the
+  /// hundredth tick of every seed while carrying an average energy of
+  /// twenty-seven out of a possible forty-four -- growing from five to
+  /// fifteen and then falling to nothing without ever going hungry. It was
+  /// not starving. It was being eaten.
   export fn isPrey(self) -> Bool {
     match self {
       Role.Grazer => true
       Role.Scavenger => true
       Role.Cooperator => true
-      Role.Wildcard => true
       _ => false
     }
   }
@@ -203,6 +215,13 @@ export fn smells(role: Role) -> Bool {
 /// walks away from what it can see, so a hunter that saw no further than its
 /// prey could only ever find one by walking into it. It is still bounded, and
 /// so is what it can be told about what it sees.
+///
+/// The wildcard's is the short one, and it is one. A wildcard's rule is
+/// legible because it is about what is *beside* it, and a creature reacting to
+/// something two cells away is a creature a visitor cannot see reacting to. It
+/// also happens to be what keeps a wildcard that avoids company from starving
+/// in company's constant presence, which is a different argument for the same
+/// number and is the one that was measured.
 export fn sightRange(role: Role) -> Int {
   match role {
     Role.Grazer => 2
@@ -210,7 +229,7 @@ export fn sightRange(role: Role) -> Int {
     Role.Hunter => 3
     Role.Scavenger => 2
     Role.Cooperator => 2
-    Role.Wildcard => 2
+    Role.Wildcard => 1
   }
 }
 

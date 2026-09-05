@@ -53,7 +53,9 @@ pub use contract::{
     Sighting,
 };
 pub use resolve::{admissible, Verdict};
-pub use species::{Failure, LoadCost, Lowering, Outcome, Recorded, Session, Species, Tape};
+pub use species::{
+    Failure, Habitat, LoadCost, Lowering, Outcome, Recorded, Session, Species, Tape,
+};
 
 /// Where the catalog is, relative to the workspace root.
 pub const CATALOG: &str = "catalog";
