@@ -86,7 +86,7 @@ pub fn admissible(view: &SelfView, world: &Observation, decision: Decision) -> V
             Some(seen) if seen.away > 1 => {
                 Verdict::Refused(format!("creature {id} is {} steps away", seen.away))
             }
-            Some(seen) if !view.role.hunts() => {
+            Some(_) if !view.role.hunts() => {
                 Verdict::Refused(format!("a {} does not hunt", view.role.case()))
             }
             Some(seen) if !seen.role.is_prey() => {

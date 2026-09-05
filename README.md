@@ -1,9 +1,14 @@
 # The Cove
 
+[![ci](https://github.com/myuon/the-cove/actions/workflows/ci.yml/badge.svg)](https://github.com/myuon/the-cove/actions/workflows/ci.yml)
+[![pages](https://github.com/myuon/the-cove/actions/workflows/pages.yml/badge.svg)](https://github.com/myuon/the-cove/actions/workflows/pages.yml)
+
 **AI wrote their instincts. Now watch them live.**
 
 The Cove is a public digital ecosystem whose creatures are controlled by
 programs written in [Cove](https://github.com/myuon/cove).
+
+**[Open the tank →](https://myuon.github.io/the-cove/)**
 
 ![The tank: four species on a sixteen by twelve reef, the hunter mid-hunt with a death marker beside it](docs/images/tank.png)
 
@@ -28,6 +33,18 @@ Slice 0 is under way: one species, headless, and the golden tests that make it
 an integration contract rather than a demonstration.
 
 ## The page
+
+It is live at **<https://myuon.github.io/the-cove/>**, and it is static: no
+account, no database, no server. The simulation, the Cove runtime and the
+catalog are one WebAssembly module; the page is compiled TypeScript.
+
+Click a creature and it tells you why it did what it did, in three layers —
+one sentence, then its state, then the Cove function that decided and the
+runtime's record of the call.
+
+![The inspector: a followed creature, with the line of Cove that decided highlighted](docs/images/inspector.png)
+
+To run it yourself:
 
 ```console
 $ apps/web/build.sh
