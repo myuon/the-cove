@@ -25,12 +25,13 @@ use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
-/// The clock the page supplies, and the one `cove-runtime` already demands.
-///
-/// Declared here as well as there because a Rust module cannot borrow another
-/// crate's import declaration. It is the same module, the same name and the
-/// same signature, so it resolves to the same import rather than to a second
-/// one.
+// The clock the page supplies, and the one `cove-runtime` already demands.
+//
+// Declared here as well as there because a Rust module cannot borrow another
+// crate's import declaration. It is the same module, the same name and the
+// same signature, so it resolves to the same import rather than to a second
+// one. A plain comment and not a doc comment: rustdoc does not document an
+// extern block and says so as a warning.
 #[cfg(target_arch = "wasm32")]
 #[link(wasm_import_module = "cove")]
 extern "C" {

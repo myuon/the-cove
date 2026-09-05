@@ -1,0 +1,14 @@
+{
+  "name": "the-cove-web",
+  "private": true,
+  "type": "module",
+  "description": "The browser half of The Cove: loads the tank wasm module, renders it, and drives the loop.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "node check.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

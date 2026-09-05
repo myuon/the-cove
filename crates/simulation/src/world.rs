@@ -258,7 +258,7 @@ fn stands_on(seen: &[Sighting], at: Cell) -> bool {
 /// The world a seed describes, before anything has happened in it.
 ///
 /// Founders are interleaved rather than grouped, and how many of each there
-/// are is read off `capacity` rather than chosen. See [`founders`] for both,
+/// are is read off `capacity` rather than chosen. See `cast_for` for both,
 /// and for the even split that was tried first and killed the hunters.
 pub fn new_world(seed: i64, width: i64, height: i64, roster: &Roster) -> World {
     let mut generator = seed;
