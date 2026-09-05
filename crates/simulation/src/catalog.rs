@@ -36,6 +36,20 @@ pub struct SpeciesDef {
     /// is `cells / capacity`, which is how a cast is weighted towards the
     /// creatures a reef holds most of.
     pub capacity: i64,
+    /// How the tank draws one.
+    pub visual: VisualDef,
+}
+
+/// How a species is drawn.
+///
+/// A shape as well as a colour, because a tank told apart by hue alone is a
+/// tank a colour-blind visitor cannot read, and the acceptance criteria say
+/// every species must be visually distinguishable.
+#[derive(Clone, Debug)]
+pub struct VisualDef {
+    pub colour: String,
+    pub shape: String,
+    pub size: i64,
 }
 
 #[derive(Deserialize)]
@@ -44,6 +58,14 @@ struct RawFile {
     name: String,
     role: String,
     traits: RawTraits,
+    visual: RawVisual,
+}
+
+#[derive(Deserialize)]
+struct RawVisual {
+    colour: String,
+    shape: String,
+    size: i64,
 }
 
 #[derive(Deserialize)]
@@ -61,8 +83,17 @@ impl SpeciesDef {
         let path = catalog_dir.join("species").join(id).join("species.toml");
         let text = std::fs::read_to_string(&path)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        SpeciesDef::parse(&text, &path.display().to_string())
+    }
+
+    /// The same, over text a caller already holds.
+    ///
+    /// `named` is what a parse failure is reported against. It exists for the
+    /// browser, which has no filesystem to read a catalog off and carries one
+    /// compiled into the module by `include_str!` instead.
+    pub fn parse(text: &str, named: &str) -> Result<SpeciesDef, String> {
         let raw: RawFile =
-            toml::from_str(&text).map_err(|e| format!("cannot parse {}: {e}", path.display()))?;
+            toml::from_str(text).map_err(|e| format!("cannot parse {named}: {e}"))?;
         Ok(SpeciesDef {
             id: raw.id,
             name: raw.name,
@@ -71,6 +102,11 @@ impl SpeciesDef {
             stride: raw.traits.stride,
             forage: raw.traits.forage,
             capacity: raw.traits.capacity,
+            visual: VisualDef {
+                colour: raw.visual.colour,
+                shape: raw.visual.shape,
+                size: raw.visual.size,
+            },
         })
     }
 }
@@ -106,6 +142,12 @@ impl Roster {
     /// The default four-species catalog: [`SPECIES_IDS`].
     pub fn load_default(catalog_dir: &Path) -> Result<Roster, String> {
         Roster::load(catalog_dir, &SPECIES_IDS)
+    }
+
+    /// A roster over definitions a caller already holds, in the order their
+    /// catalog index names.
+    pub fn of(defs: Vec<SpeciesDef>) -> Roster {
+        Roster { defs }
     }
 
     /// How many species this roster holds.

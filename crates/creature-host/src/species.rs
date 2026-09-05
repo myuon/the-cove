@@ -15,7 +15,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::clock::Stopwatch;
 
 use cove_diag::{render, SourceMap, Span};
 use cove_runtime::budget::{Budget, Limits, Stopped};
@@ -96,10 +98,7 @@ impl Species {
         instinct: &Path,
         creature: &Path,
     ) -> Result<Species, String> {
-        let mut cost = LoadCost::default();
-        let started = Instant::now();
-        let root = creature.to_path_buf();
-
+        let started = Stopwatch::start();
         let layout = [
             (contract, "contract"),
             (instinct, "instinct"),
@@ -109,9 +108,34 @@ impl Species {
         for (dir, module) in layout {
             read_module(dir, module, &mut files)?;
         }
+        Species::from_units(id, files, started.elapsed())
+    }
+
+    /// The same again, over source a caller already holds.
+    ///
+    /// Each unit is a module name, the path it should report diagnostics
+    /// against, and its text. Nothing here touches a filesystem, which is the
+    /// point: `wasm32-unknown-unknown` has no filesystem, and the catalog a
+    /// browser runs is one compiled into the module by `include_str!` rather
+    /// than one read off a disk that is not there.
+    ///
+    /// `read` is what finding the source cost, for a caller that measured it;
+    /// pass `Duration::ZERO` for source that was already in hand.
+    pub fn from_units(
+        id: &str,
+        mut files: Vec<(String, PathBuf, String)>,
+        read: Duration,
+    ) -> Result<Species, String> {
+        let mut cost = LoadCost {
+            read,
+            ..LoadCost::default()
+        };
         files.sort();
-        cost.read = started.elapsed();
         cost.files = files.len();
+        let root = files
+            .first()
+            .and_then(|(_, path, _)| path.parent().map(Path::to_path_buf))
+            .unwrap_or_else(|| PathBuf::from("."));
 
         // The hash is of the source that was loaded, in the order it was
         // loaded, and of nothing else. It is what a replay identity needs and
@@ -120,7 +144,7 @@ impl Species {
         // source it shipped.
         let source_hash = hash(&files);
 
-        let started = Instant::now();
+        let started = Stopwatch::start();
         let mut sources = SourceMap::new();
         let mut modules: BTreeMap<String, Module> = BTreeMap::new();
         for (name, path, text) in files {
@@ -141,11 +165,11 @@ impl Species {
         cost.modules = modules.len();
 
         let package = Package {
-            root: root.clone(),
+            root,
             config: Config::default(),
             modules,
         };
-        let started = Instant::now();
+        let started = Stopwatch::start();
         let program = Compiler::new()
             .compile(&package)
             .map_err(|items| report(&sources, &items))?;
@@ -196,7 +220,7 @@ impl Species {
     ///
     /// Once per species, held for the life of the process.
     pub fn lower(&self) -> Result<Lowering, String> {
-        let started = Instant::now();
+        let started = Stopwatch::start();
         let schemas = HostSchemas::new();
         let program =
             cove_ir::lower_entry(&self.program, &self.sources, &schemas, CREATURE, DECIDE)

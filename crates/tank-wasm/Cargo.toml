@@ -1,0 +1,12 @@
+[package]
+name = "tank-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+creature-host = { path = "../creature-host" }
+simulation = { path = "../simulation" }

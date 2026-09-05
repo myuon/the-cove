@@ -42,12 +42,14 @@
 //! manifest. The runtime offers no version or content hash of its own, so the
 //! project that shipped the source is what identifies it.
 
+pub mod clock;
 pub mod contract;
 pub mod report;
 pub mod resolve;
 pub mod scenario;
 pub mod species;
 
+pub use clock::Stopwatch;
 pub use contract::{
     ActionResult, Cell, Decision, Heading, Intent, Observation, Patch, Reason, Role, SelfView,
     Sighting,

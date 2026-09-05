@@ -412,7 +412,7 @@ pub fn decisions(
     for creature in &world.creatures {
         let view = self_view(world, creature, roster);
         let observation = look(world, creature, roster);
-        let started = std::time::Instant::now();
+        let started = creature_host::Stopwatch::start();
         let outcome = sessions[creature.species].decide(&view, &observation, limits.clone());
         cost.cove_time += started.elapsed();
         cost.instructions += outcome.instructions;

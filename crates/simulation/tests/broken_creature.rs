@@ -37,6 +37,11 @@ fn looping_roster() -> Roster {
             stride: 1,
             forage: 5,
             capacity: 1_000_000,
+            visual: simulation::catalog::VisualDef {
+                colour: "#000000".to_string(),
+                shape: "round".to_string(),
+                size: 3,
+            },
         }],
     }
 }

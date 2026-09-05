@@ -172,6 +172,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tank-wasm"
+version = "0.1.0"
+dependencies = [
+ "creature-host",
+ "simulation",
+]
+
+[[package]]
 name = "toml"
 version = "0.8.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"

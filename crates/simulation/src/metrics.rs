@@ -1,6 +1,8 @@
 //! What one tick cost, in a shape a caller can read.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use creature_host::Stopwatch;
 
 use cove_runtime::Limits;
 use creature_host::{ActionResult, Session};
@@ -68,7 +70,7 @@ pub fn advance_metered(
     sessions: &mut [Session<'_>],
     limits: &Limits,
 ) -> (Turn, TickMetrics) {
-    let started = Instant::now();
+    let started = Stopwatch::start();
     let (turn, cost) = advance(world, roster, sessions, limits);
     let tick_time = started.elapsed();
     let refused = turn

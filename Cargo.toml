@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/creature-host", "crates/simulation"]
+members = ["crates/creature-host", "crates/simulation", "crates/tank-wasm"]
 
 [workspace.package]
 version = "0.1.0"

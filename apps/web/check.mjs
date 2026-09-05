@@ -1,0 +1,88 @@
+// The tank runs in a JavaScript host, or this exits non-zero.
+//
+// The gate the browser build has to pass before anything is drawn: the module
+// instantiates with the one import it demands, opens a world, ticks it, and
+// answers a snapshot whose hash matches what the native simulation computes
+// for the same seed. That last part is the whole point — if the two ever
+// disagree, a shared replay link means nothing.
+//
+//   $ cargo build -p tank-wasm --profile checked --target wasm32-unknown-unknown
+//   $ node apps/web/check.mjs
+
+import { readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
+
+const here = dirname(fileURLToPath(import.meta.url))
+const root = join(here, '..', '..')
+const wasm = join(root, 'target', 'wasm32-unknown-unknown', 'checked', 'tank_wasm.wasm')
+const golden = join(root, 'fixtures', 'browser-hashes.txt')
+
+const imports = { cove: { cove_now_millis: () => Date.now() } }
+const { instance } = await WebAssembly.instantiate(await readFile(wasm), imports)
+const { tank_open, tank_tick, tank_snapshot, tank_free, memory } = instance.exports
+
+function blob(pointer) {
+  const view = new DataView(memory.buffer)
+  const length = view.getUint32(pointer, true)
+  const bytes = new Uint8Array(memory.buffer, pointer + 4, length)
+  const text = new TextDecoder().decode(bytes)
+  tank_free(pointer, length + 4)
+  return text
+}
+
+function fail(why) {
+  console.error(`not ok: ${why}`)
+  process.exit(1)
+}
+
+// The seed and reef `regen_hashes` computed the fixture over. They are here
+// rather than read from the file because a check that took its own parameters
+// from the thing it is checking is not a check.
+const SEED = 7
+const WIDTH = 16
+const HEIGHT = 12
+
+const expected = (await readFile(golden, 'utf8'))
+  .split('\n')
+  .filter((line) => line && !line.startsWith('#'))
+
+if (tank_open(SEED, WIDTH, HEIGHT) !== 0) fail('the tank would not open')
+let seen = JSON.parse(blob(tank_snapshot()))
+if (seen.tick !== 0) fail(`a new tank is at tick ${seen.tick}`)
+if (seen.creatures.length < 8 || seen.creatures.length > 14) {
+  fail(`a cast of ${seen.creatures.length}`)
+}
+if (seen.catalog.length !== 4) fail(`a catalog of ${seen.catalog.length}`)
+if (seen.food.length !== WIDTH * HEIGHT) fail(`a reef of ${seen.food.length} cells`)
+
+const hashes = []
+for (let step = 0; step < expected.length; step += 1) {
+  if (tank_tick() !== 0) fail(`tick ${step} failed`)
+  seen = JSON.parse(blob(tank_snapshot()))
+  hashes.push(seen.hash)
+}
+if (seen.tick !== expected.length) {
+  fail(`${expected.length} ticks left the tank at ${seen.tick}`)
+}
+if (new Set(hashes).size < expected.length - 10) fail('the tank stopped changing')
+
+// The claim a shared replay link stands on: a seed means the same world in a
+// browser as it does natively. Neither side can make it alone, so it is made
+// here, against hashes `cargo run -p simulation --bin regen_hashes` wrote.
+for (let step = 0; step < expected.length; step += 1) {
+  if (String(hashes[step]) !== expected[step]) {
+    fail(
+      `tick ${step + 1}: WebAssembly says ${hashes[step]}, ` +
+        `native says ${expected[step]}`
+    )
+  }
+}
+if (seen.creatures.some((c) => typeof c.reason !== 'string' || c.reason === '')) {
+  fail('a creature acted for no reason')
+}
+if (seen.failures !== 0) fail(`${seen.failures} invocations failed`)
+
+console.log(`ok: ${seen.creatures.length} creatures, 60 ticks, hash ${seen.hash}`)
+console.log(`   ${seen.catalog.map((s) => `${s.name} (${s.role})`).join(', ')}`)
+console.log(`   ${expected.length} hashes agree with the native simulation`)
