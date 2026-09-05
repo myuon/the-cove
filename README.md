@@ -5,6 +5,8 @@
 The Cove is a public digital ecosystem whose creatures are controlled by
 programs written in [Cove](https://github.com/myuon/cove).
 
+![The tank: four species on a sixteen by twelve reef, the hunter mid-hunt with a death marker beside it](docs/images/tank.png)
+
 V0 will be a deterministic observation experience: each visit assembles a
 seeded world from a curated catalog of creatures. There is no visitor prompt or
 visitor-provided code. Visitors can watch, rewind, share, and inspect why each
@@ -24,6 +26,22 @@ trust a branch.
 
 Slice 0 is under way: one species, headless, and the golden tests that make it
 an integration contract rather than a demonstration.
+
+## The page
+
+```console
+$ apps/web/build.sh
+$ cd apps/web && npx serve .
+```
+
+TypeScript and Canvas 2D, no framework and no bundler. Rendering time and
+simulation time are separate: the world is a fixed six ticks a second whatever
+the frame rate, and positions are interpolated between snapshots so a grid
+moves smoothly. The seed is in the URL, so a reload is the same reef.
+
+`node apps/web/check.mjs` is the gate the browser build has to pass, and the
+line in it that matters is not that the module runs. It is that sixty state
+hashes computed in WebAssembly are the ones computed natively.
 
 ## The contract
 
