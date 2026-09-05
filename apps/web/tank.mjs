@@ -16,7 +16,10 @@
  * clock and no replay could reproduce one.
  */
 export async function loadTank(url) {
-  const imports = { cove: { cove_now_millis: () => Date.now() } }
+    // `performance.now()` rather than `Date.now()`: the tank times itself
+  // through this import and a tick is about a millisecond, so whole
+  // milliseconds would report zeros. Nothing branches on the reading.
+  const imports = { cove: { cove_now_millis: () => performance.now() } }
   const source = fetch ? fetch(url) : null
   const { instance } = source && typeof WebAssembly.instantiateStreaming === 'function'
     ? await WebAssembly.instantiateStreaming(source, imports)

@@ -98,9 +98,8 @@ struct Tank {
     /// just resolved. Empty before the first one.
     last: Vec<CreatureOutcome>,
     limits: Limits,
-    /// What the last tick spent inside Cove.
-    instructions: u64,
-    failures: u64,
+    /// What the last tick spent, as `decisions` reported it.
+    cost: simulation::world::DecisionCost,
 }
 
 thread_local! {
@@ -194,8 +193,7 @@ pub extern "C" fn tank_open(seed: u32, width: u32, height: u32) -> i32 {
             world,
             last: Vec::new(),
             limits: simulation::decision_limits(),
-            instructions: 0,
-            failures: 0,
+            cost: simulation::world::DecisionCost::default(),
         });
     });
     0
@@ -216,8 +214,7 @@ pub extern "C" fn tank_tick() -> i32 {
         };
         let (asks, cost) = decisions(&tank.world, &tank.roster, &mut tank.sessions, &tank.limits);
         let turn = resolve(&tank.world, &asks, &tank.roster);
-        tank.instructions = cost.instructions;
-        tank.failures = cost.failed_fuel + cost.failed_fault;
+        tank.cost = cost;
         tank.world = turn.world;
         tank.last = turn.outcomes;
         0
@@ -317,9 +314,18 @@ fn snapshot(tank: &Tank) -> String {
         world.refusals,
         world.cast.len()
     ));
+    // What the tick cost, split the two ways it can be split. `instructions`
+    // and `fuel` are the same for every run of this seed; `coveMicros` is not,
+    // and nothing in the simulation reads it.
     out.push_str(&format!(
-        "\"instructions\":{},\"failures\":{},",
-        tank.instructions, tank.failures
+        "\"instructions\":{},\"fuel\":{},\"decisions\":{},\"failedFuel\":{},\
+\"failedFault\":{},\"coveMicros\":{},",
+        tank.cost.instructions,
+        tank.cost.fuel,
+        tank.cost.decisions,
+        tank.cost.failed_fuel,
+        tank.cost.failed_fault,
+        tank.cost.cove_time.as_micros()
     ));
 
     out.push_str("\"catalog\":[");

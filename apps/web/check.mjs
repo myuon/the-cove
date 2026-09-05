@@ -18,7 +18,11 @@ const root = join(here, '..', '..')
 const wasm = join(root, 'target', 'wasm32-unknown-unknown', 'checked', 'tank_wasm.wasm')
 const golden = join(root, 'fixtures', 'browser-hashes.txt')
 
-const imports = { cove: { cove_now_millis: () => Date.now() } }
+// `performance.now()` rather than `Date.now()`: the tank times itself through
+// this import, a tick is about a millisecond, and whole milliseconds would
+// report a column of zeros. Nothing branches on the reading — no deadline is
+// ever set — so a monotonic sub-millisecond clock is only better reporting.
+const imports = { cove: { cove_now_millis: () => performance.now() } }
 const { instance } = await WebAssembly.instantiate(await readFile(wasm), imports)
 const { tank_open, tank_tick, tank_snapshot, tank_free, memory } = instance.exports
 
@@ -81,8 +85,21 @@ for (let step = 0; step < expected.length; step += 1) {
 if (seen.creatures.some((c) => typeof c.reason !== 'string' || c.reason === '')) {
   fail('a creature acted for no reason')
 }
-if (seen.failures !== 0) fail(`${seen.failures} invocations failed`)
+if (seen.failedFuel !== 0 || seen.failedFault !== 0) {
+  fail(`${seen.failedFuel} fuel stops and ${seen.failedFault} faults`)
+}
+if (seen.decisions !== seen.creatures.length) {
+  fail(`${seen.decisions} decisions for ${seen.creatures.length} creatures`)
+}
+if (seen.instructions <= 0) fail('a tick cost no instructions')
+if (seen.fuel !== seen.instructions) {
+  fail(`fuel ${seen.fuel} and instructions ${seen.instructions} disagree`)
+}
 
 console.log(`ok: ${seen.creatures.length} creatures, 60 ticks, hash ${seen.hash}`)
 console.log(`   ${seen.catalog.map((s) => `${s.name} (${s.role})`).join(', ')}`)
 console.log(`   ${expected.length} hashes agree with the native simulation`)
+console.log(
+  `   last tick: ${seen.decisions} decisions, ${seen.instructions} instructions, ` +
+    `${seen.coveMicros}us inside Cove`
+)
