@@ -108,24 +108,45 @@ A carcass arrives warm and red with one expanding ring, then settles.
 
 ## The creatures
 
-One geometric mark each, outlined bright and filled faint, oriented along
-`facing`, with a line out of the front whose length follows speed.
+Not animals. **An instrument**: a rotor turning inside a housing, with a needle
+for where it is going.
 
-| | |
-| --- | --- |
-| Reef Grazer | a circle, mint `#4de0a8` |
-| Kelp Hunter | a dart — the only mark with a point, for the only role that has one — coral `#ff5a48` |
-| Shy Scavenger | a diamond, violet `#a98bff` |
-| Hermit Crab | a hexagon, amber `#ffc44d` |
+| | | |
+| --- | --- | --- |
+| Reef Grazer | a square, turning +9° a second | mint `#4de0a8` |
+| Kelp Hunter | a triangle, −26° a second | coral `#ff5a48` |
+| Shy Scavenger | a pentagon, +15° a second | violet `#a98bff` |
+| Hermit Crab | a hexagon, +5° a second | amber `#ffc44d` |
 
-A drawn fish was tried first and it was the wrong register: an illustration of
-an animal sitting on top of a diagram of a world. And it did not survive
-contact with the reef — every species except the hunter read as a lollipop,
-because a tail drawn as a stroked curve is a line and a tail is a shape.
+Everything about the mark is mechanical on purpose.
 
-A mark is honest about what this is, stays crisp at any zoom, and tells four
-species apart by **shape** before any colour is read, which is what the
-accessibility criterion wanted anyway.
+It is **radially symmetric**, so it has no front of its own and therefore no
+body language; which way it is going is said by a needle, the way a gauge says
+it, and not by the shape leaning. It **spins at a constant rate** that never
+changes — not with speed, not with what the creature is doing, not with how
+close it is to dying — and every individual of a species is at exactly the same
+angle as every other, because they all read one clock. That is the monotony,
+and monotony is the point: nothing here is *expressing* anything. The two rings
+**counter-rotate**, which is a thing gears do and nothing alive does.
+
+A species is identified by three independent facts — how many sides, how fast
+and which way it turns, and its colour — so it survives a reader who cannot see
+one of the three.
+
+### Three answers before this one, and why each was wrong
+
+A **drawn fish** was an illustration sitting on top of a diagram, and it did
+not survive the reef either: a tail drawn as a stroked curve is a line, and a
+tail is a shape.
+
+A **single geometric mark** fixed the register and lost the animal — one
+primitive is a token, not a body.
+
+A **spine of segments carrying a travelling wave** made a convincing animal,
+and that was the fault. It was *too* alive for a picture that is otherwise a
+field of forces: the eye went to the wriggling thing and read the reef as its
+habitat rather than as the subject. What is wanted is the other register
+entirely.
 
 ## The perception, which is the point
 
@@ -157,6 +178,9 @@ are the product.
   half-life rather than a per-frame fraction so a slow machine and a fast one
   ease at the same rate in real time.
 - It costs a little lag, and lag is free here. Nobody is steering anything.
+- The **facing does not ease**. It slews at a constant 150° a second, because
+  an exponential turn eases out of itself and that is how an animal turns. A
+  servo turns at one rate until it arrives and then stops.
 - Nothing snaps. A creature turns because the reef makes it turn, and the
   drawing should never do in one frame what the reef did over four.
 

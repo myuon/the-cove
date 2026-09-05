@@ -127,10 +127,15 @@ export function departedCreatures(
  * new snapshot arrives, and the eye reads that as a flick. Slowing the world
  * down does not fix it — it gives the same corner longer to be looked at.
  *
- * So the drawn position, facing and speed are low-passed: each frame they move
- * a fixed fraction of the way to where interpolation says they should be, with
- * the fraction set by a half-life rather than by the frame rate, so a slow
- * machine and a fast one ease at the same speed in real time.
+ * So the drawn position and speed are low-passed: each frame they move a fixed
+ * fraction of the way to where interpolation says they should be, with the
+ * fraction set by a half-life rather than by the frame rate, so a slow machine
+ * and a fast one ease at the same speed in real time.
+ *
+ * The facing is *not* low-passed. It slews at a constant angular rate, because
+ * an exponential turn eases out of itself and that is how an animal turns —
+ * and the creatures here are meant to read as instruments rather than animals.
+ * A servo turns at one rate until it arrives, and then it stops.
  *
  * It costs a little lag, and lag is free here. Nobody is steering anything;
  * this is a thing to watch.
@@ -140,6 +145,7 @@ export function easeDrawn(
   target: readonly DrawnCreature[],
   dtMs: number,
   halfLifeMs: number,
+  turnDegPerSecond: number,
 ): DrawnCreature[] {
   const k = halfLifeMs <= 0 ? 1 : 1 - Math.pow(0.5, dtMs / halfLifeMs);
   const out: DrawnCreature[] = [];
@@ -155,15 +161,27 @@ export function easeDrawn(
       out.push(want);
       continue;
     }
-    const fx = was.facingX + (want.facingX - was.facingX) * k;
-    const fy = was.facingY + (want.facingY - was.facingY) * k;
-    const length = Math.hypot(fx, fy);
+    // Position and speed are low-passed; the *facing* slews at a constant
+    // angular rate instead. An exponential turn eases out of itself, which is
+    // how an animal turns and is exactly the reading this drawing does not
+    // want. A servo turns at one rate until it arrives and then stops.
+    const wasAngle = Math.atan2(was.facingY, was.facingX);
+    const wantAngle = Math.atan2(want.facingY, want.facingX);
+    let delta = wantAngle - wasAngle;
+    while (delta > Math.PI) {
+      delta -= Math.PI * 2;
+    }
+    while (delta < -Math.PI) {
+      delta += Math.PI * 2;
+    }
+    const most = ((turnDegPerSecond * Math.PI) / 180) * (dtMs / 1000);
+    const turned = wasAngle + Math.max(-most, Math.min(most, delta));
     const eased: DrawnCreature = {
       ...want,
       x: was.x + (want.x - was.x) * k,
       y: was.y + (want.y - was.y) * k,
-      facingX: length > 1e-6 ? fx / length : want.facingX,
-      facingY: length > 1e-6 ? fy / length : want.facingY,
+      facingX: Math.cos(turned),
+      facingY: Math.sin(turned),
       speed: was.speed + (want.speed - was.speed) * k,
     };
     held.set(want.id, eased);

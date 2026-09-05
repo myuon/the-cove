@@ -648,8 +648,8 @@ test("easeDrawn covers half the distance in one half-life", async () => {
     intent: "", reason: "", result: "",
   });
   const held = new Map();
-  easeDrawn(held, [at(0)], 16, 100);
-  const [after] = easeDrawn(held, [at(10)], 100, 100);
+  easeDrawn(held, [at(0)], 16, 100, 150);
+  const [after] = easeDrawn(held, [at(10)], 100, 100, 150);
   assert.ok(Math.abs(after.x - 5) < 1e-9, `moved to ${after.x}`);
 });
 
@@ -661,14 +661,14 @@ test("easeDrawn eases at the same rate whatever the frame rate", async () => {
     intent: "", reason: "", result: "",
   });
   const slow = new Map();
-  easeDrawn(slow, [at(0)], 16, 200);
-  const [slowAfter] = easeDrawn(slow, [at(100)], 200, 200);
+  easeDrawn(slow, [at(0)], 16, 200, 150);
+  const [slowAfter] = easeDrawn(slow, [at(100)], 200, 200, 150);
 
   const fast = new Map();
-  easeDrawn(fast, [at(0)], 16, 200);
+  easeDrawn(fast, [at(0)], 16, 200, 150);
   let fastAfter;
   for (let i = 0; i < 10; i += 1) {
-    [fastAfter] = easeDrawn(fast, [at(100)], 20, 200);
+    [fastAfter] = easeDrawn(fast, [at(100)], 20, 200, 150);
   }
   assert.ok(
     Math.abs(slowAfter.x - fastAfter.x) < 0.5,
@@ -686,7 +686,7 @@ test("easeDrawn puts a new creature where it actually is", async () => {
     speed: 1, energy: 10, age: 0, hidden: false,
     intent: "", reason: "", result: "",
   };
-  const [placed] = easeDrawn(new Map(), [fresh], 16, 130);
+  const [placed] = easeDrawn(new Map(), [fresh], 16, 130, 150);
   assert.equal(placed.x, 40);
   assert.equal(placed.y, 30);
 });
@@ -701,8 +701,48 @@ test("easeDrawn forgets creatures that are gone", async () => {
     intent: "", reason: "", result: "",
   };
   const held = new Map();
-  easeDrawn(held, [one], 16, 130);
+  easeDrawn(held, [one], 16, 130, 150);
   assert.equal(held.size, 1);
-  easeDrawn(held, [], 16, 130);
+  easeDrawn(held, [], 16, 130, 150);
   assert.equal(held.size, 0);
+});
+
+// The facing slews at a constant rate rather than easing exponentially: these
+// are instruments, not animals, and an exponential turn eases out of itself.
+// Without this the rate would be whatever the frame rate made it.
+test("easeDrawn turns the facing at a constant rate", async () => {
+  const { easeDrawn } = await import("../dist/interpolate.js");
+  const facing = (fx, fy) => ({
+    id: 1, species: 0, x: 0, y: 0, facingX: fx, facingY: fy,
+    speed: 0, energy: 10, age: 1, hidden: false,
+    intent: "", reason: "", result: "",
+  });
+  const held = new Map();
+  easeDrawn(held, [facing(1, 0)], 16, 130, 90);
+  // Ninety degrees a second, asked to reverse, given a quarter second: it
+  // should have turned twenty-two and a half degrees and no more.
+  const [after] = easeDrawn(held, [facing(-1, 0)], 250, 130, 90);
+  const degrees = (Math.atan2(after.facingY, after.facingX) * 180) / Math.PI;
+  assert.ok(Math.abs(Math.abs(degrees) - 22.5) < 0.01, `turned to ${degrees}`);
+});
+
+// And it takes the short way round. Without the wrap it would swing the long
+// way through 350 degrees to get to a heading ten degrees away.
+test("easeDrawn turns the short way round", async () => {
+  const { easeDrawn } = await import("../dist/interpolate.js");
+  const at = (deg) => ({
+    id: 1, species: 0, x: 0, y: 0,
+    facingX: Math.cos((deg * Math.PI) / 180),
+    facingY: Math.sin((deg * Math.PI) / 180),
+    speed: 0, energy: 10, age: 1, hidden: false,
+    intent: "", reason: "", result: "",
+  });
+  const held = new Map();
+  easeDrawn(held, [at(-175)], 16, 130, 90);
+  const [after] = easeDrawn(held, [at(175)], 100, 130, 90);
+  const degrees = (Math.atan2(after.facingY, after.facingX) * 180) / Math.PI;
+  // Ninety degrees a second for a tenth of a second is nine, taken backwards
+  // through the wrap: -175 - 9 is -184, which is 176. The long way round
+  // would have gone to -166.
+  assert.ok(Math.abs(degrees - 176) < 0.01, `turned to ${degrees}`);
 });

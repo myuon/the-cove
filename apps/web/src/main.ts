@@ -76,6 +76,12 @@ const CAMERA_HALF_LIFE_MS = 420;
  * tick interpolation puts it. Long enough to round off every tick boundary,
  * short enough that a creature never visibly lags behind its own trail. */
 const DRAWN_HALF_LIFE_MS = 130;
+
+/** How fast a creature's needle swings round to a new heading, in degrees a
+ * second. Constant, and the same for everything: a servo has one speed. Fast
+ * enough to arrive well inside a tick, slow enough that the swing is a thing
+ * somebody watches happen. */
+const TURN_DEG_PER_SECOND = 150;
 const FOLLOW_ZOOM = 2;
 
 // How often a trail point is sampled, in real milliseconds. Every render
@@ -696,6 +702,7 @@ async function main(): Promise<void> {
         interpolateCreatures(prevSnapshot, currSnapshot, alpha),
         dt,
         DRAWN_HALF_LIFE_MS,
+        TURN_DEG_PER_SECOND,
       );
 
       // The camera eases in real time (`dt`, never `dt * speed`) towards
