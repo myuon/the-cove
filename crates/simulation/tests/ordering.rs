@@ -59,13 +59,13 @@ fn spawned(id: i64, at: Cell) -> Creature {
 }
 
 fn move_toward(id: i64, heading: Heading) -> Ask {
-    Ask {
+    Ask::of(
         id,
-        decision: Decision {
+        Decision {
             intent: Intent::Move(heading),
             reason: Reason::Exploring,
         },
-    }
+    )
 }
 
 // Creature 1 stands one cell west of an empty cell and creature 2 stands one

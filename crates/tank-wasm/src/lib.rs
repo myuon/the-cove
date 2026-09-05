@@ -50,9 +50,9 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
 
-use creature_host::{Habitat, Limits, Lowering, Session, Species};
+use creature_host::{Failure, Habitat, Limits, Lowering, Session, Species, Stopped};
 use simulation::catalog::{Roster, SpeciesDef};
-use simulation::world::{decisions, new_world, resolve, CreatureOutcome, World};
+use simulation::world::{decisions, new_world, resolve, Ask, CreatureOutcome, World};
 
 /// The contract every species is compiled against, and the moves any of them
 /// could make. One copy, shared by every species in the catalog, exactly as
@@ -97,6 +97,15 @@ struct Tank {
     /// What every creature asked for and what the world did, from the tick
     /// just resolved. Empty before the first one.
     last: Vec<CreatureOutcome>,
+    /// Every invocation of the tick just resolved, kept whole.
+    ///
+    /// For every creature and not only the watched one, because a visitor
+    /// clicks a creature *after* seeing it do something. Something kept only
+    /// for the selection is something nobody can ever ask about at the moment
+    /// they want to.
+    asked: Vec<Ask>,
+    /// Which creature the page is inspecting, if any.
+    focus: Option<i64>,
     limits: Limits,
     /// What the last tick spent, as `decisions` reported it.
     cost: simulation::world::DecisionCost,
@@ -192,6 +201,8 @@ pub extern "C" fn tank_open(seed: u32, width: u32, height: u32) -> i32 {
             sessions,
             world,
             last: Vec::new(),
+            asked: Vec::new(),
+            focus: None,
             limits: simulation::decision_limits(),
             cost: simulation::world::DecisionCost::default(),
         });
@@ -215,10 +226,64 @@ pub extern "C" fn tank_tick() -> i32 {
         let (asks, cost) = decisions(&tank.world, &tank.roster, &mut tank.sessions, &tank.limits);
         let turn = resolve(&tank.world, &asks, &tank.roster);
         tank.cost = cost;
+        tank.asked = asks;
         tank.world = turn.world;
         tank.last = turn.outcomes;
         0
     })
+}
+
+/// Watches creature `id`, or watches nobody when `id` is negative or names no
+/// living creature.
+///
+/// The snapshot then carries a `focus` block: what that creature was shown,
+/// what its invocation cost, what the runtime wrote about it, and why it
+/// failed if it did. It is one call rather than a field of the snapshot
+/// because the answer is large and thirteen copies of it are thirteen copies
+/// nobody asked for.
+///
+/// The id is an `i32` and not the `i64` a creature carries, because a wasm
+/// `i64` is a `BigInt` in JavaScript and a page should not have to think about
+/// that to click on a fish. A world would have to refill a slot two billion
+/// times to reach the difference.
+///
+/// # Safety
+///
+/// None required of the caller.
+#[no_mangle]
+pub extern "C" fn tank_focus(id: i32) -> i32 {
+    let id = i64::from(id);
+    TANK.with(|slot| {
+        let mut held = slot.borrow_mut();
+        let Some(tank) = held.as_mut() else {
+            return fail("no tank is open");
+        };
+        tank.focus = if id >= 0 && tank.world.creatures.iter().any(|c| c.id == id) {
+            Some(id)
+        } else {
+            None
+        };
+        0
+    })
+}
+
+/// The Cove source species `at` decides with, as a length-prefixed UTF-8 blob.
+///
+/// The whole file, because the answer to "why did it do that" is a function
+/// somebody can read and the comment above that function is half of the
+/// answer. It is a separate call from the snapshot for the obvious reason: it
+/// is the same text every tick.
+///
+/// # Safety
+///
+/// As [`tank_snapshot`].
+#[no_mangle]
+pub extern "C" fn tank_source(at: usize) -> *mut u8 {
+    let text = CATALOG
+        .get(at)
+        .map(|(_, _, behaviour)| (*behaviour).to_string())
+        .unwrap_or_default();
+    into_blob(text)
 }
 
 /// The tank as it stands, as a length-prefixed UTF-8 JSON blob.
@@ -376,6 +441,139 @@ fn snapshot(tank: &Tank) -> String {
             quote(said.map(|o| o.decision.reason.name()).unwrap_or("")),
             quote(&creature.last.name())
         ));
+    }
+    out.push_str("],");
+
+    out.push_str("\"focus\":");
+    match tank
+        .focus
+        .and_then(|id| tank.asked.iter().find(|ask| ask.id == id))
+    {
+        Some(ask) => out.push_str(&focus(tank, ask)),
+        None => out.push_str("null"),
+    }
+    out.push('}');
+    out
+}
+
+/// Everything about one invocation, for the creature a visitor is watching.
+///
+/// The observation is the whole of what that creature could have reasoned
+/// from, which is what makes an explanation honest rather than plausible: the
+/// page may say "because a hunter came within one step" only when a hunter
+/// one step away is in this object.
+fn focus(tank: &Tank, ask: &Ask) -> String {
+    let mut out = String::with_capacity(1024);
+    let creature = tank.world.creatures.iter().find(|c| c.id == ask.id);
+    let result = tank
+        .last
+        .iter()
+        .find(|o| o.id == ask.id)
+        .map(|o| o.result.name())
+        .unwrap_or_default();
+    let species = creature.map(|c| c.species).unwrap_or(0);
+    out.push_str(&format!(
+        "{{\"id\":{},\"species\":{},\"tick\":{},",
+        ask.id, species, ask.asked.observation.tick
+    ));
+    out.push_str(&format!(
+        "\"intent\":{},\"reason\":{},\"result\":{},",
+        quote(&ask.decision.intent.name()),
+        quote(ask.decision.reason.name()),
+        quote(&result)
+    ));
+    out.push_str(&format!(
+        "\"instructions\":{},\"fuel\":{},",
+        ask.asked.instructions, ask.asked.fuel
+    ));
+    out.push_str("\"failure\":");
+    match &ask.asked.failure {
+        None => out.push_str("null"),
+        Some(Failure::Stopped(stopped)) => {
+            let kind = match stopped {
+                Stopped::Fuel => "fuel",
+                Stopped::Deadline => "deadline",
+                Stopped::Cancelled => "cancelled",
+                Stopped::CallDepth => "callDepth",
+                Stopped::HostCalls => "hostCalls",
+                Stopped::Concurrency => "concurrency",
+            };
+            // A budget stop names which limit and not which line. The runtime
+            // knows the first and not the second, and a page that invented an
+            // `at` here would be inventing it.
+            out.push_str(&format!(
+                "{{\"kind\":{},\"message\":{},\"at\":null}}",
+                quote(kind),
+                quote(&format!("the {kind} budget ran out"))
+            ));
+        }
+        Some(Failure::Faulted { message, at }) => out.push_str(&format!(
+            "{{\"kind\":\"fault\",\"message\":{},\"at\":{}}}",
+            quote(message),
+            match at {
+                Some(where_) => quote(where_),
+                None => "null".to_string(),
+            }
+        )),
+        Some(Failure::Malformed(why)) => out.push_str(&format!(
+            "{{\"kind\":\"malformed\",\"message\":{},\"at\":null}}",
+            quote(why)
+        )),
+    }
+    out.push(',');
+
+    let seen = &ask.asked.observation;
+    out.push_str(&format!(
+        "\"observation\":{{\"here\":{},\"shelter\":{},\"scent\":{},",
+        seen.here,
+        seen.shelter,
+        match seen.scent {
+            Some(heading) => quote(heading.name()),
+            None => "null".to_string(),
+        }
+    ));
+    out.push_str("\"around\":[");
+    for (at, patch) in seen.around.iter().enumerate() {
+        if at > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "{{\"heading\":{},\"x\":{},\"y\":{},\"food\":{},\"shelter\":{},\
+\"outside\":{},\"occupied\":{}}}",
+            quote(patch.heading.name()),
+            patch.at.x,
+            patch.at.y,
+            patch.food,
+            patch.shelter,
+            patch.outside,
+            patch.occupied
+        ));
+    }
+    out.push_str("],\"nearby\":[");
+    for (at, sighting) in seen.nearby.iter().enumerate() {
+        if at > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "{{\"id\":{},\"species\":{},\"role\":{},\"x\":{},\"y\":{},\"away\":{},\
+\"hidden\":{}}}",
+            sighting.id,
+            sighting.species,
+            quote(&format!("{:?}", sighting.role).to_lowercase()),
+            sighting.at.x,
+            sighting.at.y,
+            sighting.away,
+            sighting.hidden
+        ));
+    }
+    out.push_str("]},");
+
+    out.push_str("\"trace\":[");
+    for (at, line) in ask.asked.trace.iter().enumerate() {
+        if at > 0 {
+            out.push(',');
+        }
+        out.push_str(&quote(line));
     }
     out.push_str("]}");
     out

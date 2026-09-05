@@ -79,11 +79,18 @@ pub const MAX_FOOD: i64 = 4;
 
 /// How far a creature in this role can see, in steps.
 ///
-/// `contract.cove`'s own values: a hunter's is the long one, everything else
-/// is bounded the same. This is not mirrored in `creature-host`'s Rust
-/// contract (only `Role::hunts` and `Role::is_prey` are), so it is
-/// reimplemented here rather than duplicated by copy-paste of a constant
-/// that already exists in a language the host does not evaluate.
+/// The hunter's is the long one, and it is what makes a hunter a hunter: prey
+/// walks away from what it can see, so a hunter that saw no further than its
+/// prey could only ever find one by walking into it. It is still bounded, and
+/// so is what a creature can be told about what it sees.
+///
+/// This lives here and only here. `contract.cove` used to declare a
+/// `sightRange` beside its types, and no species ever called it -- the host
+/// built the observation and applied its own copy. Two statements of one rule
+/// in two languages, one of which nothing evaluates, and they disagreed about
+/// the wildcard within a day of being written. A creature never asks how far
+/// it can see; it is shown what it is shown, and how much that is, is the
+/// world's business.
 pub fn sight_range(role: Role) -> i64 {
     match role {
         Role::Hunter => 3,
@@ -184,11 +191,77 @@ pub struct World {
     pub refusals: i64,
 }
 
-/// One creature's intent for this tick.
-#[derive(Clone, Copy, Debug)]
+/// One creature's intent for this tick, and everything about how it got
+/// there.
+///
+/// The decision is what the world resolves and [`Ask::asked`] is what a
+/// visitor is shown. They are one value because they are one invocation: the
+/// deliverable is that every visible action links to *the* Cove call behind
+/// it, and two values a caller had to pair up by id would be two values a
+/// caller could pair up wrongly.
+#[derive(Clone, Debug)]
 pub struct Ask {
     pub id: i64,
     pub decision: Decision,
+    pub asked: Asked,
+}
+
+/// What one invocation was given, what it cost, and what it wrote.
+///
+/// Kept for every creature every tick rather than only for whichever one is
+/// being watched, because a visitor clicks a creature *after* seeing it do
+/// something. Something kept only for the selected creature is something the
+/// visitor can never ask about the moment they want to.
+///
+/// It is small on purpose: an observation is four patches and at most four
+/// sightings, and a tape is a handful of lines. Bounded by the contract, not
+/// by trimming.
+#[derive(Clone, Debug)]
+pub struct Asked {
+    /// The bounded, immutable world this creature was shown. The whole of
+    /// what it could have reasoned from, so the whole of what an explanation
+    /// may honestly appeal to.
+    pub observation: Observation,
+    /// What the invocation executed, exactly.
+    pub instructions: u64,
+    /// What it was charged against its budget.
+    pub fuel: u64,
+    /// Why it produced no decision, for the tick it did not. A creature that
+    /// fails rests, and this is what says the rest was not a choice.
+    pub failure: Option<Failure>,
+    /// The runtime's own events for this invocation, tagged with this
+    /// creature and this tick.
+    pub trace: Vec<String>,
+}
+
+impl Ask {
+    /// An intent nobody was asked for.
+    ///
+    /// `resolve` takes its intents rather than fetching them so that a test
+    /// can hand the world something no species would produce, which is how
+    /// this package says what it means by isolation. Such an intent has no
+    /// invocation behind it, so it has nothing to inspect, and this is what
+    /// says so rather than an [`Asked`] full of plausible zeroes.
+    pub fn of(id: i64, decision: Decision) -> Ask {
+        Ask {
+            id,
+            decision,
+            asked: Asked {
+                observation: Observation {
+                    tick: 0,
+                    here: 0,
+                    shelter: false,
+                    around: Vec::new(),
+                    nearby: Vec::new(),
+                    scent: None,
+                },
+                instructions: 0,
+                fuel: 0,
+                failure: None,
+                trace: Vec::new(),
+            },
+        }
+    }
 }
 
 /// What one creature's intent came to.
@@ -418,20 +491,27 @@ pub fn decisions(
         cost.instructions += outcome.instructions;
         cost.fuel += outcome.fuel;
         cost.decisions += 1;
-        let decision = match outcome.answer {
-            Ok(decision) => decision,
-            Err(Failure::Stopped(Stopped::Fuel)) => {
+        let (decision, failure) = match &outcome.answer {
+            Ok(decision) => (*decision, None),
+            Err(why @ Failure::Stopped(Stopped::Fuel)) => {
                 cost.failed_fuel += 1;
-                rest()
+                (rest(), Some(why.clone()))
             }
-            Err(_) => {
+            Err(why) => {
                 cost.failed_fault += 1;
-                rest()
+                (rest(), Some(why.clone()))
             }
         };
         asks.push(Ask {
             id: creature.id,
             decision,
+            asked: Asked {
+                observation,
+                instructions: outcome.instructions,
+                fuel: outcome.fuel,
+                failure,
+                trace: outcome.events.into_iter().map(|e| e.line).collect(),
+            },
         });
     }
     (asks, cost)
@@ -606,18 +686,18 @@ pub fn resolve(world: &World, asks: &[Ask], roster: &Roster) -> Turn {
     let mut generator = world.seed;
 
     for (position, creature) in world.creatures.iter().enumerate() {
-        let ask = ask_at(asks, position);
+        let (ask_id, ask_decision) = ask_at(asks, position);
         let mut energy = creature.energy - UPKEEP;
         let mut standing = creature.at;
         let mut hidden = false;
 
-        let result = if ask.id != creature.id {
+        let result = if ask_id != creature.id {
             ActionResult::Refused(format!(
                 "this intent names creature {}, and the world is asking creature {}",
-                ask.id, creature.id
+                ask_id, creature.id
             ))
         } else {
-            match ask.decision.intent {
+            match ask_decision.intent {
                 Intent::Rest => ActionResult::Rested,
                 Intent::Move(heading) => {
                     let target = step_from(creature.at, heading);
@@ -715,7 +795,7 @@ pub fn resolve(world: &World, asks: &[Ask], roster: &Roster) -> Turn {
         outcomes.push(CreatureOutcome {
             id: creature.id,
             species: creature.species,
-            decision: ask.decision,
+            decision: ask_decision,
             result,
         });
     }
@@ -791,11 +871,10 @@ pub fn resolve(world: &World, asks: &[Ask], roster: &Roster) -> Turn {
 ///
 /// Id `0` belongs to no creature, so a missing ask is refused by the same
 /// rule that refuses an ask naming somebody else.
-fn ask_at(asks: &[Ask], at: usize) -> Ask {
-    asks.get(at).copied().unwrap_or(Ask {
-        id: 0,
-        decision: rest(),
-    })
+fn ask_at(asks: &[Ask], at: usize) -> (i64, Decision) {
+    asks.get(at)
+        .map(|ask| (ask.id, ask.decision))
+        .unwrap_or((0, rest()))
 }
 
 /// The prey a hunt names, if it is alive, adjacent, and huntable — read out

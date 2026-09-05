@@ -2,7 +2,7 @@ cove commit: 1c6bdc064f92b67bfe04fd2e8506dbd27b635d97
 backend: vm
 schema version: 1
 species: shyScavenger
-source hash: 41b7c20b0e55b208
+source hash: 480b4189c6c67872
 fuel limit: 1000000
 note: fuel and instructions agree, and are printed separately because
 they are measured differently -- instructions is a session counter's

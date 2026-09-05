@@ -75,20 +75,20 @@ fn a_hunt_into_cover_is_refused() {
         spawned(2, 1, Cell { x: 0, y: 0 }, false), // the prey, in cover
     ]);
     let asks = vec![
-        Ask {
-            id: 1,
-            decision: Decision {
+        Ask::of(
+            1,
+            Decision {
                 intent: Intent::Hunt(2),
                 reason: Reason::Hunting,
             },
-        },
-        Ask {
-            id: 2,
-            decision: Decision {
+        ),
+        Ask::of(
+            2,
+            Decision {
                 intent: Intent::Rest,
                 reason: Reason::Waiting,
             },
-        },
+        ),
     ];
 
     let turn = resolve(&world, &asks, &roster);

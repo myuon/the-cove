@@ -177,9 +177,18 @@ export struct Patch {
 
 /// Everything a creature is told about the world this tick.
 ///
-/// It is bounded: four patches, and at most `sightLimit()` sightings, nearest
-/// first. A behaviour that wants to see further cannot, which is what makes
-/// the cost of a tick a function of the population and not of its square.
+/// It is bounded: four patches, and a handful of sightings, nearest first. A
+/// behaviour that wants to see further cannot, which is what makes the cost of
+/// a tick a function of the population and not of its square.
+///
+/// How far and how many are the world's decisions and are not written here. A
+/// creature never asks how far it can see; it is shown what it is shown, and
+/// this type is the whole of what it was shown. Three functions saying
+/// otherwise used to sit at the bottom of this file -- `sightRange`, `smells`
+/// and `sightLimit` -- and no species ever called one of them: the host
+/// applied its own copy of each rule while these described it in a language
+/// the host does not evaluate. They disagreed within a day, and nobody would
+/// have found out, because a rule nothing calls is a rule nothing tests.
 export struct Observation {
   tick: Int
   /// How much food is in the cell this creature is standing in.
@@ -194,43 +203,6 @@ export struct Observation {
   /// cells away is invisible to everything here except the thing that eats
   /// carcasses.
   scent: Option<Heading>
-}
-
-/// How many sightings an observation carries, at most.
-export fn sightLimit() -> Int {
-  4
-}
-
-/// Whether this role can smell food it cannot see.
-export fn smells(role: Role) -> Bool {
-  match role {
-    Role.Scavenger => true
-    _ => false
-  }
-}
-
-/// How far a creature in this role can see, in steps.
-///
-/// The hunter's is the long one, and it is what makes a hunter a hunter: prey
-/// walks away from what it can see, so a hunter that saw no further than its
-/// prey could only ever find one by walking into it. It is still bounded, and
-/// so is what it can be told about what it sees.
-///
-/// The wildcard's is the short one, and it is one. A wildcard's rule is
-/// legible because it is about what is *beside* it, and a creature reacting to
-/// something two cells away is a creature a visitor cannot see reacting to. It
-/// also happens to be what keeps a wildcard that avoids company from starving
-/// in company's constant presence, which is a different argument for the same
-/// number and is the one that was measured.
-export fn sightRange(role: Role) -> Int {
-  match role {
-    Role.Grazer => 2
-    Role.Ambusher => 2
-    Role.Hunter => 3
-    Role.Scavenger => 2
-    Role.Cooperator => 2
-    Role.Wildcard => 1
-  }
 }
 
 /// The one thing a behaviour asks the world for this tick.
