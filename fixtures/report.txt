@@ -1,0 +1,68 @@
+cove commit: 1c6bdc064f92b67bfe04fd2e8506dbd27b635d97
+backend: vm
+schema version: 1
+species: shyScavenger
+source hash: f4180986528ac469
+fuel limit: 1000000
+note: fuel and instructions agree, and are printed separately because
+they are measured differently -- instructions is a session counter's
+difference and needs no budget, fuel is what the budget was charged.
+What the 1024-instruction safepoint stride decides is when the charge
+is compared against the limit, not what it is: a run stops at the
+first safepoint at or past its limit, so a bound overshoots by less
+than a stride and a completed run is charged exactly.
+
+[empty]
+  decision: rest because=waiting
+  instructions: 246
+  fuel: 246
+  verdict: allowed rest
+  tape:
+    enter creature.decide
+    exit creature.decide
+    HeapSummary
+    ended Success
+
+[grazing]
+  decision: eat because=feeding
+  instructions: 56
+  fuel: 56
+  verdict: allowed eat
+  tape:
+    enter creature.decide
+    exit creature.decide
+    HeapSummary
+    ended Success
+
+[cornered]
+  decision: hide because=fleeing_threat
+  instructions: 291
+  fuel: 291
+  verdict: refused: there is no cover here
+  tape:
+    enter creature.decide
+    exit creature.decide
+    HeapSummary
+    ended Success
+
+[crowded]
+  decision: rest because=crowded
+  instructions: 310
+  fuel: 310
+  verdict: allowed rest
+  tape:
+    enter creature.decide
+    exit creature.decide
+    HeapSummary
+    ended Success
+
+[adversarial]
+  decision: hide because=sheltering
+  instructions: 79
+  fuel: 79
+  verdict: allowed hide
+  tape:
+    enter creature.decide
+    exit creature.decide
+    HeapSummary
+    ended Success

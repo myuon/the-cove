@@ -239,6 +239,7 @@ impl Species {
         let vm = Vm::new(&runtime, runtime.hosts(), &lowering.ir);
         let mut session = Session {
             vm,
+            hosts: runtime.hosts(),
             sources: Arc::clone(&self.sources),
             tape,
         };
@@ -258,6 +259,7 @@ pub struct Lowering {
 /// One backend, ready to decide as many ticks as the world has.
 pub struct Session<'a> {
     vm: Vm<'a>,
+    hosts: &'a HostRegistry,
     sources: Arc<SourceMap>,
     tape: Arc<Tape>,
 }
@@ -273,15 +275,24 @@ impl Session<'_> {
     pub fn decide(&mut self, view: &SelfView, world: &Observation, limits: Limits) -> Outcome {
         self.tape.begin(view.id, world.tick);
         let before = self.vm.instructions();
-        let budget = Budget::new(limits);
-        let meter = budget.meter();
         let answered = self.vm.invoke_within(
-            budget,
+            Budget::new(limits),
             CREATURE,
             DECIDE,
             vec![view.to_cove(), world.to_cove()],
         );
         let instructions = self.vm.instructions() - before;
+        // Read from the registry, and not from a `Meter` taken off the budget
+        // before it was handed over. `HostRegistry::begin_run` calls
+        // `Budget::restart`, which builds the meter afresh, so a meter taken
+        // beforehand is a meter of nothing and reads zero for ever -- including
+        // for an invocation the same budget stopped. `Budget::meter()` is
+        // public and this is not written down anywhere, which cost an
+        // afternoon and a test that asserted the wrong thing.
+        let fuel = self
+            .hosts
+            .with_budget(|budget| budget.fuel_spent())
+            .unwrap_or(0);
         let (events, dropped) = self.tape.take();
         let answer = match answered {
             Ok(value) => Decision::of(&value).map_err(Failure::Malformed),
@@ -290,7 +301,7 @@ impl Session<'_> {
         Outcome {
             answer,
             instructions,
-            fuel: meter.fuel_spent(),
+            fuel,
             events,
             dropped,
         }
@@ -373,14 +384,23 @@ pub struct Outcome {
     pub instructions: u64,
     /// What this invocation was charged against its budget.
     ///
-    /// Not the same number as [`Outcome::instructions`], and coarser on
-    /// purpose: the machine charges at a safepoint, every
-    /// `cove_runtime::SAFEPOINT_STRIDE` instructions, so an invocation that
-    /// executes fewer than that is charged nothing at all and one that
-    /// executes more is charged in blocks. That is what makes fuel cheap
-    /// enough to impose on every tick, and it is why a budget is a bound
-    /// rather than a measurement. Read this to know how close a creature came
-    /// to its limit; read `instructions` to know what it cost.
+    /// The same number as [`Outcome::instructions`] for a decision that ran to
+    /// its end, and both are here because they are measured differently: this
+    /// one is what the budget was charged and needs a budget installed to mean
+    /// anything, and that one is a difference of a session counter that runs
+    /// whether a budget exists or not.
+    ///
+    /// What `cove_runtime::SAFEPOINT_STRIDE` decides is when the charge is
+    /// compared against the limit and not what the charge is. A run is stopped
+    /// at the first safepoint at or past its limit, so a bound overshoots by
+    /// less than one stride -- 50,176 for a limit of 50,000 -- and a run that
+    /// finished is charged exactly what it executed.
+    ///
+    /// It is read back through the registry rather than through a
+    /// `cove_runtime::Meter` taken off the `Budget` beforehand. That was the
+    /// first thing this crate did and it reads zero for ever: `begin_run`
+    /// calls `Budget::restart`, which builds the meter afresh, so the meter a
+    /// caller kept is a meter of nothing.
     pub fuel: u64,
     /// The runtime events this invocation produced, tagged with the creature
     /// and tick they belong to.
@@ -537,8 +557,8 @@ fn read_module(
     module: &str,
     into: &mut Vec<(String, PathBuf, String)>,
 ) -> Result<(), String> {
-    let entries = std::fs::read_dir(dir)
-        .map_err(|e| format!("cannot read `{}`: {e}", dir.display()))?;
+    let entries =
+        std::fs::read_dir(dir).map_err(|e| format!("cannot read `{}`: {e}", dir.display()))?;
     let mut found = false;
     for entry in entries {
         let entry = entry.map_err(|e| format!("cannot read `{}`: {e}", dir.display()))?;
@@ -571,12 +591,11 @@ fn hash(files: &[(String, PathBuf, String)]) -> String {
     };
     for (module, path, text) in files {
         eat(module.as_bytes());
-        eat(
-            path.file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default()
-                .as_bytes(),
-        );
+        eat(path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+            .as_bytes());
         eat(text.as_bytes());
     }
     format!("{state:016x}")

@@ -1,0 +1,28 @@
+use contract.Decision
+use contract.Intent
+use contract.Observation
+use contract.Reason
+use contract.SelfView
+
+// A creature that loops, and a sibling of it that does not.
+//
+// `looping` spins for every input there is, so a session serving it can only
+// ever be asked to stop it again -- which proves that a budget is fresh per
+// call and proves nothing about the world going on around the creature that
+// spent it. This one spins for creature zero alone. Every other creature of
+// the same species, on the same session, answers immediately.
+//
+// That is the claim worth holding: one creature loses its tick and the tick
+// goes on. It cannot be made with one behaviour, because a behaviour that
+// always loops leaves nothing to ask afterwards.
+
+/// Spins for ever for creature zero, and rests for everybody else.
+export fn decide(view: SelfView, observation: Observation) -> Decision {
+  if view.id == 0 {
+    var spun = observation.tick
+    while spun >= 0 {
+      spun = spun + 1
+    }
+  }
+  Decision(intent: Intent.Rest, reason: Reason.Waiting)
+}

@@ -1,0 +1,22 @@
+use contract.Decision
+use contract.Intent
+use contract.Observation
+use contract.Reason
+use contract.SelfView
+
+// A creature that asks for something the world will not do.
+//
+// It is well typed and it always will be: `decide` returns a `Decision`, so a
+// species cannot answer something that is not one. What it can do is name a
+// creature that is not there, and that is what this does. The refusal is the
+// world's and not the language's, which is the distinction this fixture
+// exists to hold: a decision the checker admits is not yet a decision the
+// world will carry out.
+
+/// Hunts a creature nothing can see.
+export fn decide(view: SelfView, observation: Observation) -> Decision {
+  Decision(
+    intent: Intent.Hunt(view.id + observation.tick + 9000),
+    reason: Reason.Hunting,
+  )
+}

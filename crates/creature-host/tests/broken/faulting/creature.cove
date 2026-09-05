@@ -1,0 +1,20 @@
+use contract.Decision
+use contract.Intent
+use contract.Observation
+use contract.Reason
+use contract.SelfView
+
+// A creature that breaks an invariant.
+//
+// Dividing by zero is not an expected failure in Cove and is not a `Result`:
+// it stops the run, with a span naming the line that did it. What this is here
+// for is the other half of isolation -- a creature can be wrong in a way the
+// language calls broken, and the session goes on serving the creature asked
+// after it.
+
+/// Divides by a zero it computed, and stops.
+export fn decide(view: SelfView, observation: Observation) -> Decision {
+  let zero = observation.tick - observation.tick
+  let boom = view.energy / zero
+  Decision(intent: Intent.Hunt(boom), reason: Reason.Hunting)
+}

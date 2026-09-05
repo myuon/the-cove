@@ -1,0 +1,22 @@
+use contract.Decision
+use contract.Intent
+use contract.Observation
+use contract.Reason
+use contract.SelfView
+
+// A creature that never answers.
+//
+// Not a species. It is compiled against the shipped contract and the shipped
+// instincts so that it is exactly as legitimate as a catalog entry, and it is
+// here to be stopped: the world gives every tick its own fuel, and what this
+// proves is that spending all of it costs one creature one tick and costs the
+// world nothing.
+
+/// Counts for ever, and is stopped before it finishes.
+export fn decide(view: SelfView, observation: Observation) -> Decision {
+  var spun = view.id + observation.tick
+  while spun >= 0 {
+    spun = spun + 1
+  }
+  Decision(intent: Intent.Rest, reason: Reason.Waiting)
+}

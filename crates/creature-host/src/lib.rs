@@ -43,12 +43,16 @@
 //! project that shipped the source is what identifies it.
 
 pub mod contract;
+pub mod report;
+pub mod resolve;
+pub mod scenario;
 pub mod species;
 
 pub use contract::{
     ActionResult, Cell, Decision, Heading, Intent, Observation, Patch, Reason, Role, SelfView,
     Sighting,
 };
+pub use resolve::{admissible, Verdict};
 pub use species::{Failure, LoadCost, Lowering, Outcome, Recorded, Session, Species, Tape};
 
 /// Where the catalog is, relative to the workspace root.

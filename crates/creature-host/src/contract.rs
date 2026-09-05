@@ -224,7 +224,7 @@ pub struct Sighting {
 }
 
 impl Sighting {
-    fn to_cove(&self) -> Value {
+    fn to_cove(self) -> Value {
         Value::structure(
             format!("{CONTRACT}.Sighting"),
             vec![
@@ -251,7 +251,7 @@ pub struct Patch {
 }
 
 impl Patch {
-    fn to_cove(&self) -> Value {
+    fn to_cove(self) -> Value {
         Value::structure(
             format!("{CONTRACT}.Patch"),
             vec![
@@ -288,11 +288,11 @@ impl Observation {
                 ("shelter", Value::bool(self.shelter)),
                 (
                     "around",
-                    Value::array(self.around.iter().map(Patch::to_cove)),
+                    Value::array(self.around.iter().copied().map(Patch::to_cove)),
                 ),
                 (
                     "nearby",
-                    Value::array(self.nearby.iter().map(Sighting::to_cove)),
+                    Value::array(self.nearby.iter().copied().map(Sighting::to_cove)),
                 ),
                 (
                     "scent",
